@@ -110,9 +110,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         logs = await get_recent_logs(hass)
 
         if not logs:
-            _LOGGER.warning("DomoLink-Mistral: Aucun log récent trouvé.")
+            _LOGGER.info("DomoLink-Mistral: Aucun log récent à analyser (système sain).")
             if sensor:
-                sensor.set_status("Erreur : Aucun log récent trouvé.")
+                sensor.update_issues([], hass.data[DOMAIN][entry.entry_id]["ignored_ids"])
             return
 
         api_key = hass.data[DOMAIN][entry.entry_id]["api_key"]
