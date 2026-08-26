@@ -1,0 +1,40 @@
+analyze_now:
+  name: Analyze now
+  description: Triggers an immediate log analysis via Mistral AI.
+
+apply_fix:
+  name: Apply a fix
+  description: Applies an automatic fix for a specific issue.
+  fields:
+    fix_script:
+      name: Fix script
+      description: JSON array of Home Assistant service calls to execute.
+      required: true
+      selector:
+        text:
+
+ignore_issue:
+  name: Ignore an issue
+  description: Marks an issue as ignored so it won't appear in future analyses.
+  fields:
+    issue_id:
+      name: Issue ID
+      description: The unique identifier of the issue to ignore.
+      required: true
+      selector:
+        text:
+
+unignore_issue:
+  name: Unignore an issue
+  description: Removes an issue from the ignored list.
+  fields:
+    issue_id:
+      name: Issue ID
+      description: The unique identifier of the issue to restore.
+      required: true
+      selector:
+        text:
+
+apply_all_fixes:
+  name: Apply all fixes
+  description: Creates a backup then applies all available automatic fixes sequentially.

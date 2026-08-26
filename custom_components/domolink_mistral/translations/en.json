@@ -1,0 +1,29 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "DomoLink-Mistral Setup",
+        "description": "Enter your Mistral API key.",
+        "data": {
+          "api_key": "API Key"
+        }
+      },
+      "settings": {
+        "title": "Analysis Settings",
+        "data": {
+          "model": "Mistral Model",
+          "scan_mode": "Scan Mode",
+          "scan_frequency": "Frequency (times per day, if Live)"
+        }
+      }
+    },
+    "error": {
+      "auth": "Invalid API key",
+      "cannot_connect": "Unable to connect to Mistral",
+      "unknown": "Unexpected error"
+    },
+    "abort": {
+      "already_configured": "Already configured"
+    }
+  }
+}
