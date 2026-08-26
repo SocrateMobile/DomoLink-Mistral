@@ -8,6 +8,8 @@ from homeassistant.core import HomeAssistant
 
 from .const import DOMAIN
 
+from homeassistant.components.frontend import async_register_built_in_panel
+
 _LOGGER = logging.getLogger(__name__)
 
 PLATFORMS: list[str] = []
@@ -25,6 +27,29 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     _LOGGER.info(
         "Domolink-Mistral initialisé avec le modèle: %s", 
         entry.options.get("model")
+    )
+    
+    # Enregistrement du fichier Javascript
+    hass.http.register_static_path(
+        "/domolink_mistral_frontend",
+        hass.config.path("custom_components/domolink_mistral/frontend"),
+        cache_headers=False,
+    )
+
+    # Enregistrement du panneau latéral
+    async_register_built_in_panel(
+        hass,
+        component_name="custom",
+        sidebar_title="Mistral AI",
+        sidebar_icon="mdi:brain",
+        frontend_url_path="domolink_mistral",
+        config={
+            "_panel_custom": {
+                "name": "domolink-mistral-panel",
+                "module_url": "/domolink_mistral_frontend/domolink-mistral-panel.js",
+            }
+        },
+        require_admin=True,
     )
 
     # Déclaration des services de l'intégration
