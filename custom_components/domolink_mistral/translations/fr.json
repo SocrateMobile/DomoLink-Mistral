@@ -2,14 +2,15 @@
   "config": {
     "step": {
       "user": {
-        "title": "Configuration de Domolink-Mistral",
-        "description": "Entrez votre clé API Mistral.",
+        "title": "Configuration de DomoLink-Mistral",
+        "description": "Entrez votre clé API Mistral pour connecter votre assistant IA.",
         "data": {
-          "api_key": "Clé API"
+          "api_key": "Clé API Mistral"
         }
       },
       "settings": {
         "title": "Paramètres d'analyse",
+        "description": "Configurez le modèle et la fréquence d'analyse de vos logs.",
         "data": {
           "model": "Modèle Mistral",
           "scan_mode": "Mode de scan",
@@ -18,12 +19,12 @@
       }
     },
     "error": {
-      "auth": "Clé API invalide",
-      "cannot_connect": "Impossible de se connecter à Mistral",
-      "unknown": "Erreur inattendue"
+      "auth": "Clé API invalide. Vérifiez votre clé sur console.mistral.ai.",
+      "cannot_connect": "Impossible de se connecter à l'API Mistral. Vérifiez votre connexion internet.",
+      "unknown": "Erreur inattendue. Consultez les logs pour plus de détails."
     },
     "abort": {
-      "already_configured": "L'appareil est déjà configuré"
+      "already_configured": "DomoLink-Mistral est déjà configuré."
     }
   }
 }

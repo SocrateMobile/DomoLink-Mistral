@@ -1,4 +1,4 @@
-"""Constants for the Domolink-Mistral integration."""
+"""Constantes pour l'intégration Domolink-Mistral."""
 
 DOMAIN = "domolink_mistral"
 
@@ -15,12 +15,33 @@ DEFAULT_MODEL = "mistral-large-latest"
 
 MODELS = [
     "mistral-large-latest",
-    "open-mistral-nemo",
     "mistral-small-latest",
+    "open-mistral-nemo",
 ]
 
 SCAN_MODES = {
     MODE_LIVE: "Live (Analyse périodique)",
     MODE_BOOT: "Boot (3 min après démarrage)",
-    MODE_MANUAL: "Manuel (Uniquement à la demande)"
+    MODE_MANUAL: "Manuel (Uniquement à la demande)",
 }
+
+# Liste blanche des domaines autorisés pour l'auto-fix
+ALLOWED_FIX_DOMAINS = {
+    "automation", "script", "input_boolean", "input_number",
+    "input_select", "input_text", "input_datetime",
+    "light", "switch", "cover", "fan", "climate", "media_player",
+    "scene", "group", "timer", "counter", "number", "select",
+    "button", "text", "date", "time", "notify",
+}
+
+# Services explicitement interdits (même si le domaine est autorisé)
+BLOCKED_SERVICES = {
+    "homeassistant.restart",
+    "homeassistant.stop",
+    "hassio.host_shutdown",
+    "hassio.host_reboot",
+    "hassio.addon_stop",
+}
+
+STORAGE_KEY = "domolink_mistral.ignored_issues"
+STORAGE_VERSION = 1
