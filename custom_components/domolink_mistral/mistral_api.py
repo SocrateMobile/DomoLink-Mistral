@@ -22,7 +22,7 @@ Réponds obligatoirement au format JSON strict avec la structure suivante :
       "title": "Titre court du problème",
       "description": "Explication détaillée de ce qui ne va pas.",
       "manual_fix": "Explication pas-à-pas pour l'utilisateur pour résoudre le problème manuellement",
-      "auto_fix_script": "Le code de l'appel de service HA ou la modification JSON à appliquer. Laisse vide si non applicable."
+      "auto_fix_script": "[ { \"domain\": \"domaine_ha\", \"service\": \"nom_service\", \"service_data\": {} } ] (Un tableau JSON d'appels de services Home Assistant permettant de corriger le problème. Laisse vide si c'est impossible à automatiser via un service)."
     }
   ]
 }
