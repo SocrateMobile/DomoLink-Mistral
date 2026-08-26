@@ -64,10 +64,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     )
 
     # ── Enregistrement du panneau frontend (sidebar) ──
-    hass.http.register_static_path(
-        "/domolink_mistral_frontend",
-        hass.config.path("custom_components/domolink_mistral/frontend"),
-        cache_headers=False,
+    from homeassistant.components.http import StaticPathConfig
+
+    await hass.http.async_register_static_paths(
+        [
+            StaticPathConfig(
+                "/domolink_mistral_frontend",
+                hass.config.path("custom_components/domolink_mistral/frontend"),
+                cache_headers=False,
+            )
+        ]
     )
 
     hass.components.frontend.async_register_built_in_panel(
