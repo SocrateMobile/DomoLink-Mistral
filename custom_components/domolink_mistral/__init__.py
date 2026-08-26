@@ -102,10 +102,17 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         from .mistral_api import analyze_with_mistral
 
         _LOGGER.info("DomoLink-Mistral: Début de l'analyse des logs...")
+        sensor = hass.data[DOMAIN][entry.entry_id].get("sensor")
+
+        if sensor:
+            sensor.set_status("Extraction et nettoyage des logs locaux...")
+
         logs = await get_recent_logs(hass)
 
         if not logs:
             _LOGGER.warning("DomoLink-Mistral: Aucun log récent trouvé.")
+            if sensor:
+                sensor.set_status("Erreur : Aucun log récent trouvé.")
             return
 
         api_key = hass.data[DOMAIN][entry.entry_id]["api_key"]
@@ -113,7 +120,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             "model", "mistral-large-latest"
         )
 
+        if sensor:
+            sensor.set_status(f"Envoi à Mistral AI ({model}). Analyse sémantique en cours... (peut prendre jusqu'à 60s)")
+
         result = await analyze_with_mistral(hass, api_key, model, logs)
+        
+        if sensor:
+            sensor.set_status("Réponse reçue. Traitement des résultats...")
+
         issues = result.get("issues", [])
         _LOGGER.info("DomoLink-Mistral: Analyse terminée — %s problème(s).", len(issues))
 
@@ -121,7 +135,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         hass.data[DOMAIN][entry.entry_id]["last_issues"] = issues
 
         # Mettre à jour le capteur (avec filtre des ignorés)
-        sensor = hass.data[DOMAIN][entry.entry_id].get("sensor")
         ignored = hass.data[DOMAIN][entry.entry_id]["ignored_ids"]
         if sensor:
             sensor.update_issues(issues, ignored)

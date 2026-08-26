@@ -47,13 +47,21 @@ class DomolinkMistralPanel extends HTMLElement {
     if (entityId && this._hass.states[entityId]) {
       const stateObj = this._hass.states[entityId];
       const attrs = stateObj.attributes || {};
+      
+      const newLastAnalysis = attrs.last_analysis || null;
+      const newStatus = attrs.current_status || "En attente";
+      
+      // Mettre à jour les propriétés
       this._issues = attrs.issues || [];
       this._ignoredIssues = attrs.ignored_issues || [];
-      this._lastAnalysis = attrs.last_analysis || null;
+      this._lastAnalysis = newLastAnalysis;
+      this._currentStatus = newStatus;
 
-      // Si on était en train d'analyser et que les résultats arrivent
-      if (this._isAnalyzing && this._lastAnalysis) {
-        this._isAnalyzing = false;
+      // Arrêter le spinner si l'analyse est terminée OU s'il y a une erreur
+      if (this._isAnalyzing) {
+        if (newStatus.includes("terminée") || newStatus.includes("Erreur")) {
+          this._isAnalyzing = false;
+        }
       }
     }
   }
@@ -253,10 +261,16 @@ class DomolinkMistralPanel extends HTMLElement {
   }
 
   _renderLoading() {
+    const isError = this._currentStatus && this._currentStatus.includes("Erreur");
+    const spinnerHtml = isError ? "❌" : `<div class="big-spinner"></div>`;
+
     return `
       <div class="loading-overlay">
-        <div class="big-spinner"></div>
-        <p>Mistral AI analyse vos logs...<br>Cela peut prendre 10 à 30 secondes.</p>
+        ${spinnerHtml}
+        <h3 style="margin-bottom: 8px;">Analyse en cours...</h3>
+        <p style="color: var(--primary-color, #03a9f4); font-weight: 600; margin-top: 0;">
+          ${this._currentStatus || "Initialisation..."}
+        </p>
       </div>
     `;
   }
@@ -264,8 +278,19 @@ class DomolinkMistralPanel extends HTMLElement {
   _renderContent() {
     let html = "";
 
+    if (this._currentStatus && this._currentStatus.includes("Erreur")) {
+      html += `
+        <div class="card severity-border" style="border-left-color: #f44336;">
+          <h3 style="margin-top:0; color:#f44336;">⚠️ Échec de l'analyse</h3>
+          <p>${this._currentStatus}</p>
+        </div>
+      `;
+    }
+
     if (this._issues.length === 0 && this._ignoredIssues.length === 0) {
-      html += `<div class="empty-state">✅ Aucun problème détecté. Votre système est sain !</div>`;
+      if (!this._currentStatus || !this._currentStatus.includes("Erreur")) {
+        html += `<div class="empty-state">✅ Aucun problème détecté. Votre système est sain !</div>`;
+      }
     } else {
       // Issues actives
       for (const issue of this._issues) {
