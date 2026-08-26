@@ -40,6 +40,7 @@ class DomolinkMistralSensor(SensorEntity):
         self._issues: list = []
         self._ignored_issues: list = []
         self._last_analysis: str | None = None
+        self._current_status: str = "En attente"
         self._entry_id = entry.entry_id
 
     @property
@@ -50,7 +51,7 @@ class DomolinkMistralSensor(SensorEntity):
             name="DomoLink-Mistral",
             manufacturer="SocrateMobile",
             model="Mistral AI Log Analyzer",
-            sw_version="2.0.0",
+            sw_version="2.1.0",
         )
 
     @property
@@ -65,17 +66,21 @@ class DomolinkMistralSensor(SensorEntity):
             "issues": self._issues,
             "ignored_issues": self._ignored_issues,
             "last_analysis": self._last_analysis,
+            "current_status": self._current_status,
         }
 
-    def update_issues(self, issues: list, ignored_ids: list | None = None):
-        """Met à jour les problèmes détectés.
+    def set_status(self, status: str):
+        """Met à jour le statut en direct."""
+        self._current_status = status
+        self.async_write_ha_state()
 
-        Sépare automatiquement les issues actives et ignorées.
-        """
+    def update_issues(self, issues: list, ignored_ids: list | None = None):
+        """Met à jour les problèmes détectés."""
         ignored_ids = ignored_ids or []
 
         self._issues = [i for i in issues if i.get("id") not in ignored_ids]
         self._ignored_issues = [i for i in issues if i.get("id") in ignored_ids]
         self._state = len(self._issues)
         self._last_analysis = datetime.now().isoformat()
+        self._current_status = "Analyse terminée"
         self.async_write_ha_state()
