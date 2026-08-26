@@ -78,17 +78,35 @@ async def get_recent_logs(hass: HomeAssistant, lines: int = 200) -> str:
             if records:
                 system_entries = []
                 for record in records[-50:]:  # Les 50 dernières entrées
-                    entry = (
-                        f"[{record.get('level', 'UNKNOWN')}] "
-                        f"{record.get('name', '')}: {record.get('message', '')}"
-                    )
+                    # Gérer à la fois les dictionnaires et les objets dataclass/LogEntry
+                    if isinstance(record, dict):
+                        level = record.get("level", "UNKNOWN")
+                        name = record.get("name", "")
+                        message = record.get("message", "")
+                        exc = record.get("exception", "")
+                    else:
+                        level = getattr(record, "level", "UNKNOWN")
+                        name = getattr(record, "name", "")
+                        message = getattr(record, "message", "")
+                        exc = getattr(record, "exception", "")
+                        
+                    # Le message peut être une liste dans les versions récentes
+                    if isinstance(message, list):
+                        message = " ".join(str(m) for m in message)
+
+                    entry = f"[{level}] {name}: {message}"
+                    if exc:
+                        entry += f"\n{exc}"
+                        
                     system_entries.append(entry)
-                parts.append(
-                    "=== system_log (entrées structurées) ===\n"
-                    + "\n".join(system_entries)
-                )
+                
+                if system_entries:
+                    parts.append(
+                        "=== system_log (entrées structurées) ===\n"
+                        + "\n\n".join(system_entries)
+                    )
     except Exception as e:
-        _LOGGER.debug("system_log non disponible: %s", e)
+        _LOGGER.error("Erreur lors de la lecture du system_log: %s", e)
 
     if not parts:
         return ""
