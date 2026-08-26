@@ -76,7 +76,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         ]
     )
 
-    hass.components.frontend.async_register_built_in_panel(
+    from homeassistant.components.frontend import async_register_built_in_panel
+    async_register_built_in_panel(
+        hass,
         component_name="custom",
         sidebar_title="Mistral AI",
         sidebar_icon="mdi:brain",
@@ -310,7 +312,8 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     # Supprimer le panneau latéral
     try:
-        hass.components.frontend.async_remove_panel("domolink_mistral")
+        from homeassistant.components.frontend import async_remove_panel
+        async_remove_panel(hass, "domolink_mistral")
     except Exception:
         pass
 
