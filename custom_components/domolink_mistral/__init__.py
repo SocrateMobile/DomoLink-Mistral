@@ -12,7 +12,7 @@ from homeassistant.components.frontend import async_register_built_in_panel
 
 _LOGGER = logging.getLogger(__name__)
 
-PLATFORMS: list[str] = []
+PLATFORMS: list[str] = ["sensor"]
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Configure Domolink-Mistral depuis une entrée de configuration."""
@@ -22,6 +22,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass.data[DOMAIN][entry.entry_id] = {
         "api_key": entry.data.get("api_key"),
         "options": entry.options,
+        "sensor": None # Sera peuplé par sensor.py
     }
 
     _LOGGER.info(
@@ -55,8 +56,27 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Déclaration des services de l'intégration
     async def handle_analyze_now(call):
         """Gère l'appel du service pour déclencher une analyse manuelle."""
-        _LOGGER.info("Domolink-Mistral : Analyse déclenchée manuellement.")
-        # L'intégration des appels à l'analyzer se fera ici
+        from .analyzer import get_recent_logs
+        from .mistral_api import analyze_with_mistral
+        
+        _LOGGER.info("Domolink-Mistral : Analyse déclenchée manuellement, récupération des logs...")
+        logs = await get_recent_logs(hass)
+        
+        if logs:
+            api_key = hass.data[DOMAIN][entry.entry_id]["api_key"]
+            model = hass.data[DOMAIN][entry.entry_id]["options"].get("model", "mistral-large-latest")
+            
+            _LOGGER.info("Envoi des logs à Mistral...")
+            result = await analyze_with_mistral(hass, api_key, model, logs)
+            issues = result.get("issues", [])
+            _LOGGER.info("Analyse terminée, %s problème(s) trouvé(s).", len(issues))
+            
+            # Mise à jour du capteur (Sensor)
+            sensor = hass.data[DOMAIN][entry.entry_id].get("sensor")
+            if sensor:
+                sensor.update_issues(issues)
+        else:
+            _LOGGER.warning("Aucun log récent trouvé ou erreur de lecture.")
 
     async def handle_apply_fix(call):
         """Gère l'application d'un correctif automatique."""
