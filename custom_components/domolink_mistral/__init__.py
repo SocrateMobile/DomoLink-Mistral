@@ -27,13 +27,31 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         entry.options.get("model")
     )
 
-    # Déclaration du service pour forcer l'analyse
+    # Déclaration des services de l'intégration
     async def handle_analyze_now(call):
         """Gère l'appel du service pour déclencher une analyse manuelle."""
         _LOGGER.info("Domolink-Mistral : Analyse déclenchée manuellement.")
-        # TODO: Implémenter l'appel au module d'analyse
+        # L'intégration des appels à l'analyzer se fera ici
+
+    async def handle_apply_fix(call):
+        """Gère l'application d'un correctif automatique."""
+        from .reparator import trigger_backup, apply_fix
         
+        fix_payload = call.data.get("fix_script")
+        if not fix_payload:
+            _LOGGER.error("Aucun script de réparation fourni.")
+            return
+
+        # 1. On lance la sauvegarde (Comportement du bouton Automatique)
+        backup_ok = await trigger_backup(hass)
+        if backup_ok:
+            # 2. On applique la modification
+            await apply_fix(hass, fix_payload)
+        else:
+            _LOGGER.error("Annulation de la réparation automatique car la sauvegarde a échoué.")
+
     hass.services.async_register(DOMAIN, "analyze_now", handle_analyze_now)
+    hass.services.async_register(DOMAIN, "apply_fix", handle_apply_fix)
 
     # Transférer la configuration aux plateformes (ex: sensor, s'il y en a)
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
