@@ -18,18 +18,38 @@ class DomolinkMistralPanel extends LitElement {
 
   constructor() {
     super();
-    // Données fictives pour tester le design de l'interface
-    this.issues = [
-      {
-        id: "demo_1",
-        title: "Test de connexion Mistral",
-        severity: "low",
-        description: "Ceci est une fausse erreur pour tester l'interface. Elle simule ce que l'IA va renvoyer.",
-        manual_fix: "1. Allez dans les paramètres.\n2. Cliquez sur ignorer pour tester.",
-        auto_fix_script: "[]"
-      }
-    ];
+    this.issues = [];
     this.selectedIssue = null;
+    this._entityId = null;
+  }
+
+  connectedCallback() {
+    super.connectedCallback();
+    this.updateIssuesFromSensor();
+    // Rafraîchir toutes les 5 secondes
+    this.interval = setInterval(() => this.updateIssuesFromSensor(), 5000);
+  }
+
+  disconnectedCallback() {
+    super.disconnectedCallback();
+    clearInterval(this.interval);
+  }
+
+  updateIssuesFromSensor() {
+    if (!this.hass) return;
+    
+    // Trouver l'entité sensor de DomoLink-Mistral
+    if (!this._entityId) {
+      this._entityId = Object.keys(this.hass.states).find(id => id.startsWith('sensor.') && id.endsWith('_issues'));
+    }
+
+    if (this._entityId && this.hass.states[this._entityId]) {
+      const stateObj = this.hass.states[this._entityId];
+      if (stateObj.attributes && stateObj.attributes.issues) {
+        this.issues = stateObj.attributes.issues;
+        this.requestUpdate();
+      }
+    }
   }
 
   static get styles() {
@@ -99,6 +119,7 @@ class DomolinkMistralPanel extends LitElement {
       </div>
 
       <div class="issues-list">
+        ${this.issues.length === 0 ? html`<p style="text-align:center; margin-top:40px; font-size: 1.2em;">Aucun problème détecté. Votre système est sain ! 🎉</p>` : ""}
         ${this.issues.map(
           (issue) => html`
             <div class="card">
