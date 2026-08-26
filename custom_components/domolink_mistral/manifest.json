@@ -1,0 +1,12 @@
+{
+  "domain": "domolink_mistral",
+  "name": "Domolink-Mistral",
+  "codeowners": [],
+  "config_flow": true,
+  "dependencies": [],
+  "documentation": "https://github.com/",
+  "integration_type": "hub",
+  "iot_class": "cloud_polling",
+  "requirements": ["mistralai>=1.0.0"],
+  "version": "1.0.0"
+}
