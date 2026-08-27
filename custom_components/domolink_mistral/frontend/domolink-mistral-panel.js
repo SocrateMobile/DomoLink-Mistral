@@ -278,9 +278,12 @@ class DomolinkMistralPanel extends HTMLElement {
   _renderHeader() {
     return `
       <div class="header">
-        <div>
-          <h1>🧠 DomoLink-Mistral</h1>
-          <div class="header-info">Dernière analyse : ${this._timeAgo(this._lastAnalysis)}</div>
+        <div style="display: flex; align-items: center; gap: 12px;">
+          <img src="/domolink_mistral_frontend/icon.png" alt="Logo" style="width: 38px; height: 38px; border-radius: 8px;" />
+          <div>
+            <h1 style="margin: 0; font-size: 1.5em; line-height: 1.2;">DomoLink-Mistral</h1>
+            <div class="header-info">Dernière analyse : ${this._timeAgo(this._lastAnalysis)}</div>
+          </div>
         </div>
         <button class="btn btn-primary" id="btn-analyze" ${this._isAnalyzing ? "disabled" : ""}>
           ${this._isAnalyzing ? '<span class="spinner"></span>Analyse en cours...' : '🔍 Analyser maintenant'}
