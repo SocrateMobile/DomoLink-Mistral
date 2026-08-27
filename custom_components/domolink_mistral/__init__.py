@@ -100,61 +100,123 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         """Logique commune d'analyse utilisée par tous les déclencheurs."""
         from .analyzer import get_recent_logs
         from .mistral_api import analyze_with_mistral
+        import time
 
-        _LOGGER.info("DomoLink-Mistral: Début de l'analyse des logs...")
         sensor = hass.data[DOMAIN][entry.entry_id].get("sensor")
+        start_time = time.monotonic()
 
-        if sensor:
-            sensor.set_status("Extraction et nettoyage des logs locaux...")
-
-        logs = await get_recent_logs(hass)
-
-        if not logs:
-            _LOGGER.info("DomoLink-Mistral: Aucun log récent à analyser (système sain).")
+        try:
+            # ── Étape 1 : Collecte des données ──
+            _LOGGER.info("DomoLink-Mistral: ═══ DÉBUT DE L'ANALYSE ═══")
             if sensor:
-                sensor.update_issues([], hass.data[DOMAIN][entry.entry_id]["ignored_ids"])
-            return
+                sensor.set_status("📊 [1/3] Collecte des données système, logs, automations, scripts...")
 
-        api_key = hass.data[DOMAIN][entry.entry_id]["api_key"]
-        model = hass.data[DOMAIN][entry.entry_id]["options"].get(
-            "model", "mistral-large-latest"
-        )
+            logs = await get_recent_logs(hass)
 
-        if sensor:
-            sensor.set_status(f"Envoi à Mistral AI ({model}). Analyse sémantique en cours... (peut prendre jusqu'à 60s)")
+            if not logs:
+                _LOGGER.info("DomoLink-Mistral: Aucune donnée à analyser (système sain).")
+                if sensor:
+                    sensor.update_issues([], hass.data[DOMAIN][entry.entry_id]["ignored_ids"])
+                return
 
-        result = await analyze_with_mistral(hass, api_key, model, logs)
-        
-        if sensor:
-            sensor.set_status("Réponse reçue. Traitement des résultats...")
-
-        issues = result.get("issues", [])
-        _LOGGER.info("DomoLink-Mistral: Analyse terminée — %s problème(s).", len(issues))
-
-        # Stocker les résultats bruts
-        hass.data[DOMAIN][entry.entry_id]["last_issues"] = issues
-
-        # Mettre à jour le capteur (avec filtre des ignorés)
-        ignored = hass.data[DOMAIN][entry.entry_id]["ignored_ids"]
-        if sensor:
-            sensor.update_issues(issues, ignored)
-
-        # Notification persistante si erreurs critiques
-        high_count = sum(1 for i in issues if i.get("severity") == "high")
-        if high_count > 0:
-            await hass.services.async_call(
-                "persistent_notification",
-                "create",
-                {
-                    "title": "🧠 DomoLink-Mistral",
-                    "message": (
-                        f"**{high_count} problème(s) critique(s)** détecté(s) "
-                        f"sur {len(issues)} au total.\n\n"
-                        "Ouvrez le panneau Mistral AI dans la barre latérale."
-                    ),
-                    "notification_id": "domolink_mistral_alert",
-                },
+            elapsed = round(time.monotonic() - start_time, 1)
+            _LOGGER.info(
+                "DomoLink-Mistral: Collecte terminée en %ss — %s caractères récupérés.",
+                elapsed, len(logs),
             )
+
+            # ── Étape 2 : Envoi à Mistral ──
+            api_key = hass.data[DOMAIN][entry.entry_id]["api_key"]
+            model = hass.data[DOMAIN][entry.entry_id]["options"].get(
+                "model", "mistral-large-latest"
+            )
+
+            if sensor:
+                sensor.set_status(
+                    f"🧠 [2/3] Envoi à Mistral AI ({model})... "
+                    f"({len(logs)} caractères, peut prendre 30-60s)"
+                )
+
+            _LOGGER.info(
+                "DomoLink-Mistral: Envoi de %s caractères à %s...",
+                len(logs), model,
+            )
+
+            result = await analyze_with_mistral(hass, api_key, model, logs)
+
+            elapsed = round(time.monotonic() - start_time, 1)
+            _LOGGER.info("DomoLink-Mistral: Réponse Mistral reçue en %ss.", elapsed)
+
+            # ── Étape 3 : Traitement des résultats ──
+            if sensor:
+                sensor.set_status("📋 [3/3] Traitement et classement des résultats...")
+
+            issues = result.get("issues", [])
+
+            # Stocker les résultats bruts
+            hass.data[DOMAIN][entry.entry_id]["last_issues"] = issues
+
+            # Mettre à jour le capteur (avec filtre des ignorés)
+            ignored = hass.data[DOMAIN][entry.entry_id]["ignored_ids"]
+            if sensor:
+                sensor.update_issues(issues, ignored)
+
+            # ── Résumé final ──
+            elapsed = round(time.monotonic() - start_time, 1)
+            high_count = sum(1 for i in issues if i.get("severity") == "high")
+            medium_count = sum(1 for i in issues if i.get("severity") == "medium")
+            low_count = sum(1 for i in issues if i.get("severity") == "low")
+
+            summary = (
+                f"✅ Analyse terminée en {elapsed}s — "
+                f"{len(issues)} problème(s) : "
+                f"🔴 {high_count} critique(s), "
+                f"🟠 {medium_count} moyen(s), "
+                f"🟢 {low_count} faible(s)"
+            )
+
+            _LOGGER.info("DomoLink-Mistral: %s", summary)
+
+            if sensor:
+                sensor.set_status(summary)
+
+            # Notification persistante avec résumé
+            if issues:
+                await hass.services.async_call(
+                    "persistent_notification",
+                    "create",
+                    {
+                        "title": "🧠 DomoLink-Mistral — Analyse terminée",
+                        "message": (
+                            f"**{len(issues)} problème(s)** détecté(s) en {elapsed}s :\n\n"
+                            f"- 🔴 **{high_count}** critique(s)\n"
+                            f"- 🟠 **{medium_count}** moyen(s)\n"
+                            f"- 🟢 **{low_count}** faible(s)\n\n"
+                            "Ouvrez le panneau **Mistral AI** dans la barre latérale."
+                        ),
+                        "notification_id": "domolink_mistral_alert",
+                    },
+                )
+            else:
+                await hass.services.async_call(
+                    "persistent_notification",
+                    "create",
+                    {
+                        "title": "🧠 DomoLink-Mistral — Tout est OK !",
+                        "message": (
+                            f"Analyse terminée en {elapsed}s.\n\n"
+                            "✅ Aucun problème détecté. Votre système est sain !"
+                        ),
+                        "notification_id": "domolink_mistral_alert",
+                    },
+                )
+
+        except Exception as e:
+            elapsed = round(time.monotonic() - start_time, 1)
+            error_msg = f"Erreur lors de l'analyse après {elapsed}s : {e}"
+            _LOGGER.error("DomoLink-Mistral: %s", error_msg)
+            if sensor:
+                sensor.set_status(f"❌ {error_msg}")
 
     async def handle_analyze_now(call):
         """Service : domolink_mistral.analyze_now"""
