@@ -84,6 +84,19 @@ class DomolinkMistralPanel extends HTMLElement {
     }
   }
 
+  _categoryIcon(category) {
+    switch (category) {
+      case "log_error": return "📜 Erreur de log";
+      case "integration": return "🔌 Intégration";
+      case "entity": return "🏷️ Entité";
+      case "automation": return "⚡ Automation";
+      case "script": return "📝 Script";
+      case "optimization": return "🚀 Optimisation";
+      case "best_practice": return "💡 Bonne pratique";
+      default: return category || "";
+    }
+  }
+
   _timeAgo(isoString) {
     if (!isoString) return "Jamais";
     const diff = Math.floor((Date.now() - new Date(isoString).getTime()) / 1000);
@@ -143,7 +156,23 @@ class DomolinkMistralPanel extends HTMLElement {
           font-size: 0.75em; font-weight: 700; color: white; margin-left: 8px;
         }
 
-        .card-title { margin: 0 0 8px 0; font-size: 1.1em; display: flex; align-items: center; flex-wrap: wrap; }
+        .badge-category {
+          background: var(--divider-color, #555);
+          color: var(--primary-text-color, #eee);
+          border: 1px solid rgba(255,255,255,0.15);
+        }
+
+        .stats-bar {
+          display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 20px;
+        }
+        .stat-chip {
+          padding: 8px 14px; border-radius: 8px; font-weight: 600; font-size: 0.85em;
+          background: var(--card-background-color, #fff);
+          box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+          display: flex; align-items: center; gap: 6px;
+        }
+
+        .card-title { margin: 0 0 8px 0; font-size: 1.1em; display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
         .card-desc { margin: 0 0 16px 0; line-height: 1.5; color: var(--secondary-text-color, #616161); }
         .buttons { display: flex; gap: 8px; flex-wrap: wrap; }
 
@@ -285,6 +314,12 @@ class DomolinkMistralPanel extends HTMLElement {
           <p>${this._currentStatus}</p>
         </div>
       `;
+    } else if (this._currentStatus && this._currentStatus.includes("terminée")) {
+      html += `
+        <div style="margin-bottom: 16px; font-size: 0.95em; color: var(--secondary-text-color, #757575);">
+          ${this._currentStatus}
+        </div>
+      `;
     }
 
     if (this._issues.length === 0 && this._ignoredIssues.length === 0) {
@@ -292,6 +327,20 @@ class DomolinkMistralPanel extends HTMLElement {
         html += `<div class="empty-state">✅ Aucun problème détecté. Votre système est sain !</div>`;
       }
     } else {
+      // Statistiques globales
+      const highCount = this._issues.filter(i => i.severity === "high").length;
+      const medCount = this._issues.filter(i => i.severity === "medium").length;
+      const lowCount = this._issues.filter(i => i.severity === "low").length;
+
+      html += `
+        <div class="stats-bar">
+          <div class="stat-chip"><strong>${this._issues.length}</strong> Problème(s) actif(s)</div>
+          ${highCount > 0 ? `<div class="stat-chip" style="color: #f44336;">🔴 <strong>${highCount}</strong> Critique(s)</div>` : ''}
+          ${medCount > 0 ? `<div class="stat-chip" style="color: #ff9800;">🟠 <strong>${medCount}</strong> Moyen(s)</div>` : ''}
+          ${lowCount > 0 ? `<div class="stat-chip" style="color: #4caf50;">🟢 <strong>${lowCount}</strong> Faible(s)</div>` : ''}
+        </div>
+      `;
+
       // Issues actives
       for (const issue of this._issues) {
         html += this._renderIssueCard(issue, false);
@@ -331,6 +380,7 @@ class DomolinkMistralPanel extends HTMLElement {
   _renderIssueCard(issue, isIgnored) {
     const color = this._severityColor(issue.severity);
     const label = this._severityLabel(issue.severity);
+    const categoryLabel = issue.category ? this._categoryIcon(issue.category) : "";
 
     let buttons = "";
     if (isIgnored) {
@@ -346,7 +396,8 @@ class DomolinkMistralPanel extends HTMLElement {
     return `
       <div class="card severity-border" style="border-left-color: ${color};">
         <div class="card-title">
-          ${issue.title}
+          <span>${issue.title}</span>
+          ${categoryLabel ? `<span class="badge badge-category">${categoryLabel}</span>` : ''}
           <span class="badge ${isIgnored ? 'ignored-badge' : ''}" style="background: ${isIgnored ? '#9e9e9e' : color};">
             ${isIgnored ? 'Ignoré' : label}
           </span>
