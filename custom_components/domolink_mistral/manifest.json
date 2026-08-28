@@ -3,10 +3,10 @@
   "name": "DomoLink-Mistral",
   "codeowners": ["@SocrateMobile"],
   "config_flow": true,
-  "dependencies": ["frontend"],
+  "dependencies": ["frontend", "conversation"],
   "documentation": "https://github.com/SocrateMobile/DomoLink-Mistral",
   "integration_type": "hub",
   "iot_class": "cloud_polling",
   "requirements": [],
-  "version": "2.5.0"
+  "version": "2.6.0"
 }

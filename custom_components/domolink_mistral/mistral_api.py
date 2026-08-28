@@ -212,3 +212,85 @@ Génère l'automation correspondante au format JSON structuré."""
         _LOGGER.error("DomoLink-Mistral: Erreur lors de la génération d'automation: %s", e)
         return {"success": False, "error": str(e)}
 
+
+CONVERSATION_SYSTEM_PROMPT = """Tu es l'assistant vocal et domotique de la maison Home Assistant, propulsé par Mistral AI.
+Tu es serviable, précis, courtois et très concis (tes réponses sont destinées à être lues ou énoncées oralement).
+
+Tu as accès à la liste et à l'état des appareils disponibles dans la maison.
+- Si l'utilisateur demande d'effectuer une action (contrôle de lumières, volets, clim, scènes, etc.), tu dois inclure la liste des appels de services correspondants dans "service_calls".
+- Si l'utilisateur pose une question sur l'état d'un appareil, utilise les données fournies pour répondre précisément.
+- Réponds toujours dans la langue de l'utilisateur.
+
+Format JSON strict obligatoire :
+{{
+  "response_text": "Ta réponse courte et naturelle à l'utilisateur",
+  "service_calls": [
+    {{
+      "domain": "nom_du_domaine",
+      "service": "nom_du_service",
+      "service_data": {{"entity_id": "..."}}
+    }}
+  ]
+}}"""
+
+
+async def process_conversation_with_mistral(
+    hass: HomeAssistant,
+    api_key: str,
+    model: str,
+    user_text: str,
+    history: list,
+    entities_context: str,
+    language: str = "fr",
+) -> dict:
+    """Traite une commande vocale ou textuelle de l'utilisateur et retourne la réponse et les actions."""
+    session = async_get_clientsession(hass)
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+    }
+
+    # Préparer les messages avec l'historique récent
+    messages = [{"role": "system", "content": CONVERSATION_SYSTEM_PROMPT}]
+
+    # Ajouter le contexte des entités dans le premier message ou le message système
+    context_msg = f"Contexte de la maison (Appareils et états actuels) :\n{entities_context}\nLangue préférée : {language}"
+    messages.append({"role": "user", "content": f"[Données domotiques]\n{context_msg}"})
+    messages.append({"role": "assistant", "content": '{"response_text": "Compris, je suis prêt à vous aider avec votre maison.", "service_calls": []}'})
+
+    # Ajouter les derniers échanges pour garder la mémoire du dialogue
+    for item in history[-6:]:
+        messages.append(item)
+
+    messages.append({"role": "user", "content": user_text})
+
+    payload = {
+        "model": model,
+        "messages": messages,
+        "response_format": {"type": "json_object"},
+        "temperature": 0.1,
+    }
+
+    try:
+        async with session.post(
+            MISTRAL_URL, headers=headers, json=payload, timeout=API_TIMEOUT
+        ) as response:
+            response.raise_for_status()
+            data = await response.json()
+            content = data["choices"][0]["message"]["content"]
+            result = json.loads(content)
+            return {
+                "success": True,
+                "response_text": result.get("response_text", "D'accord."),
+                "service_calls": result.get("service_calls", []),
+            }
+    except Exception as e:
+        _LOGGER.error("DomoLink-Mistral Assist: Erreur conversation Mistral: %s", e)
+        return {
+            "success": False,
+            "response_text": f"Désolé, une erreur est survenue lors de la communication avec Mistral : {e}",
+            "service_calls": [],
+        }
+
+
