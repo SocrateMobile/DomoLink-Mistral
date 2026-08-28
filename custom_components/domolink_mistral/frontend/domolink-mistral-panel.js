@@ -415,7 +415,7 @@ class DomolinkMistralPanel extends HTMLElement {
       buttons = `
         <button class="btn btn-ignore btn-small" data-action="ignore" data-id="${issue.id}">Ignorer</button>
         <button class="btn btn-manual btn-small" data-action="manual" data-id="${issue.id}">📖 Manuel</button>
-        ${hasAutoFix ? `<button class="btn btn-auto btn-small" data-action="auto" data-id="${issue.id}">🔧 Automatique</button>` : ''}
+        <button class="btn btn-auto btn-small" data-action="auto" data-id="${issue.id}" ${!hasAutoFix ? 'title="Pas de correctif automatique disponible pour ce problème"' : ''}>🔧 Automatique</button>
       `;
     }
 
@@ -454,14 +454,16 @@ class DomolinkMistralPanel extends HTMLElement {
   _renderConfirmDialog() {
     if (!this._confirmData) return "";
 
+    const hasAction = this._confirmData.onConfirm !== null;
+
     return `
       <div class="confirm-overlay" id="confirm-overlay">
         <div class="confirm-box">
           <h3>${this._confirmData.title || "Confirmation requise"}</h3>
           <p>${this._confirmData.message}</p>
           <div class="confirm-buttons">
-            <button class="btn btn-ignore" id="btn-confirm-cancel">Annuler</button>
-            <button class="btn btn-auto" id="btn-confirm-ok">Confirmer</button>
+            ${hasAction ? `<button class="btn btn-ignore" id="btn-confirm-cancel">Annuler</button>` : ''}
+            <button class="btn ${hasAction ? 'btn-auto' : 'btn-primary'}" id="btn-confirm-ok">${hasAction ? 'Confirmer' : 'Compris'}</button>
           </div>
         </div>
       </div>
@@ -505,18 +507,27 @@ class DomolinkMistralPanel extends HTMLElement {
             break;
           case "auto":
             if (issue) {
-              this._confirmData = {
-                title: `🔧 Réparation : ${issue.title}`,
-                message: "Une sauvegarde de sécurité sera créée avant d'appliquer la modification. Souhaitez-vous continuer ?",
-                onConfirm: () => {
-                  this._isApplying = true;
-                  this._render();
-                  this._hass.callService("domolink_mistral", "apply_fix", {
-                    fix_script: JSON.stringify(issue.auto_fix_script),
-                    issue_id: id
-                  });
-                }
-              };
+              const autoFixAvailable = issue.auto_fix_script && issue.auto_fix_script.length > 0;
+              if (autoFixAvailable) {
+                this._confirmData = {
+                  title: `🔧 Réparation : ${issue.title}`,
+                  message: "Une sauvegarde de sécurité sera créée avant d'appliquer la modification. Souhaitez-vous continuer ?",
+                  onConfirm: () => {
+                    this._isApplying = true;
+                    this._render();
+                    this._hass.callService("domolink_mistral", "apply_fix", {
+                      fix_script: JSON.stringify(issue.auto_fix_script),
+                      issue_id: id
+                    });
+                  }
+                };
+              } else {
+                this._confirmData = {
+                  title: `ℹ️ ${issue.title}`,
+                  message: "Aucun correctif automatique n'est disponible pour ce problème. Consultez le guide « 📖 Manuel » pour les instructions de correction pas-à-pas.",
+                  onConfirm: null
+                };
+              }
               this._render();
             }
             break;
