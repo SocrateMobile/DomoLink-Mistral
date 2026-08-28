@@ -227,16 +227,50 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         from .reparator import trigger_backup, apply_fix
 
         fix_payload = call.data.get("fix_script")
+        issue_id = call.data.get("issue_id")
+
         if not fix_payload:
             _LOGGER.error("DomoLink-Mistral: Aucun script de réparation fourni.")
             return
+
+        sensor = hass.data[DOMAIN][entry.entry_id].get("sensor")
+        if sensor:
+            sensor.set_status("⏳ Application du correctif en cours...")
 
         backup_ok = await trigger_backup(hass)
         if backup_ok:
             result = await apply_fix(hass, fix_payload)
             _LOGGER.info("DomoLink-Mistral: Résultat du fix — %s", result)
+
+            # Si succès et qu'un issue_id a été fourni, retirer l'issue résolue
+            data = hass.data[DOMAIN][entry.entry_id]
+            if result.get("success") and issue_id and data.get("last_issues"):
+                data["last_issues"] = [i for i in data["last_issues"] if i.get("id") != issue_id]
+                if sensor:
+                    sensor.update_issues(data["last_issues"], data["ignored_ids"])
+                    sensor.set_status(f"✅ Correctif appliqué avec succès ({result.get('applied')} action(s)).")
+            elif sensor:
+                sensor.set_status(f"Résultat: {result.get('applied')} appliqué(s), {result.get('skipped')} ignoré(s).")
+
+            # Notification
+            await hass.services.async_call(
+                "persistent_notification",
+                "create",
+                {
+                    "title": "🧠 DomoLink-Mistral — Correctif appliqué",
+                    "message": (
+                        f"**Résultat du correctif :**\n"
+                        f"- Appliqué(s) : {result.get('applied')}\n"
+                        f"- Ignoré(s) : {result.get('skipped')}\n\n"
+                        f"Détails : {', '.join(result.get('details', [])) or 'OK'}"
+                    ),
+                    "notification_id": "domolink_mistral_fix_result",
+                },
+            )
         else:
             _LOGGER.error("DomoLink-Mistral: Sauvegarde échouée, réparation annulée.")
+            if sensor:
+                sensor.set_status("❌ Échec de la sauvegarde, réparation annulée.")
 
     async def handle_ignore_issue(call):
         """Service : domolink_mistral.ignore_issue"""
@@ -280,6 +314,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         data = hass.data[DOMAIN][entry.entry_id]
         issues = data.get("last_issues", [])
         ignored = data["ignored_ids"]
+        sensor = data.get("sensor")
 
         # Filtrer les issues actives avec un auto_fix_script non-vide
         fixable = [
@@ -292,30 +327,53 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
         if not fixable:
             _LOGGER.info("DomoLink-Mistral: Aucune correction automatique disponible.")
+            if sensor:
+                sensor.set_status("ℹ️ Aucune correction automatique disponible.")
             return
 
-        _LOGGER.info(
-            "DomoLink-Mistral: All Auto — %s correction(s) à appliquer.", len(fixable)
-        )
+        if sensor:
+            sensor.set_status(f"⏳ All Auto : Application de {len(fixable)} correctif(s)...")
 
         # Une seule sauvegarde pour toutes les corrections
         backup_ok = await trigger_backup(hass)
         if not backup_ok:
             _LOGGER.error("DomoLink-Mistral: Sauvegarde échouée, All Auto annulé.")
+            if sensor:
+                sensor.set_status("❌ Échec de la sauvegarde préalable, All Auto annulé.")
             return
 
         total_applied = 0
         total_skipped = 0
+        all_details = []
+        fixed_ids = set()
 
         for issue in fixable:
             result = await apply_fix(hass, issue["auto_fix_script"])
             total_applied += result["applied"]
             total_skipped += result["skipped"]
+            all_details.extend(result.get("details", []))
+            if result.get("success"):
+                fixed_ids.add(issue.get("id"))
 
-        _LOGGER.info(
-            "DomoLink-Mistral: All Auto terminé — %s appliqué(s), %s ignoré(s).",
-            total_applied,
-            total_skipped,
+        # Retirer les issues résolues
+        data["last_issues"] = [i for i in data["last_issues"] if i.get("id") not in fixed_ids]
+        if sensor:
+            sensor.update_issues(data["last_issues"], data["ignored_ids"])
+            sensor.set_status(f"⚡ All Auto terminé : {total_applied} appliqué(s), {total_skipped} ignoré(s).")
+
+        # Notification
+        await hass.services.async_call(
+            "persistent_notification",
+            "create",
+            {
+                "title": "🧠 DomoLink-Mistral — All Auto terminé",
+                "message": (
+                    f"**{total_applied} correctif(s) appliqué(s)** avec succès.\n"
+                    f"{total_skipped} ignoré(s).\n\n"
+                    f"Détails : {', '.join(all_details) or 'Terminé'}"
+                ),
+                "notification_id": "domolink_mistral_all_auto_result",
+            },
         )
 
     # ── Enregistrement des services ──

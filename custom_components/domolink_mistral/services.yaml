@@ -4,12 +4,18 @@ analyze_now:
 
 apply_fix:
   name: Apply a fix
-  description: Applies an automatic fix for a specific issue.
+  description: Applies an automatic fix for a specific issue (service calls or YAML modifications).
   fields:
     fix_script:
       name: Fix script
-      description: JSON array of Home Assistant service calls to execute.
+      description: JSON array of Home Assistant service calls or YAML edits to execute.
       required: true
+      selector:
+        text:
+    issue_id:
+      name: Issue ID
+      description: Optional ID of the issue being fixed.
+      required: false
       selector:
         text:
 

@@ -2,12 +2,13 @@
  * DomoLink-Mistral — Panneau Frontend pour Home Assistant
  *
  * Panneau latéral interactif avec :
- * - Badges de gravité colorés (high/medium/low)
- * - Spinner de chargement pendant l'analyse
- * - Modal déplaçable (draggable) pour le mode Manuel
+ * - Analyse des logs, configuration.yaml, !includes, automations, scripts, blueprints, ESPHome
+ * - Badges de gravité colorés (high/medium/low) et étiquettes de catégorie
+ * - Boîtes de dialogue de confirmation stables (résistant aux mises à jour d'état HA)
+ * - Modal déplaçable (draggable) pour le guide pas-à-pas manuel
  * - Section "Erreurs ignorées" repliable
- * - Design responsive (mobile)
- * - Aucun import CDN externe — vanilla JS pur
+ * - Design responsive (mobile & desktop)
+ * - 100% Vanilla JS (zéro dépendance CDN externe)
  */
 
 class DomolinkMistralPanel extends HTMLElement {
@@ -19,10 +20,14 @@ class DomolinkMistralPanel extends HTMLElement {
     this._ignoredIssues = [];
     this._selectedIssue = null;
     this._isAnalyzing = false;
+    this._isApplying = false;
     this._lastAnalysis = null;
+    this._currentStatus = "En attente";
     this._showIgnored = false;
+    this._confirmData = null; // { title, message, onConfirm }
+    this._initialized = false;
 
-    // Drag state pour la modal
+    // Drag state pour la modal manuelle
     this._dragOffset = { x: 0, y: 0 };
     this._modalPos = { x: null, y: null };
     this._isDragging = false;
@@ -30,14 +35,16 @@ class DomolinkMistralPanel extends HTMLElement {
 
   set hass(hass) {
     this._hass = hass;
-    this._updateFromSensor();
-    this._render();
+    const changed = this._updateFromSensor();
+    if (!this._initialized || changed) {
+      this._initialized = true;
+      this._render();
+    }
   }
 
   _updateFromSensor() {
-    if (!this._hass) return;
+    if (!this._hass) return false;
 
-    // Trouver le sensor DomoLink-Mistral de manière fiable
     const entityId = Object.keys(this._hass.states).find(
       (id) => id.startsWith("sensor.") && id.includes("domolink") && id.includes("probleme")
     ) || Object.keys(this._hass.states).find(
@@ -47,23 +54,39 @@ class DomolinkMistralPanel extends HTMLElement {
     if (entityId && this._hass.states[entityId]) {
       const stateObj = this._hass.states[entityId];
       const attrs = stateObj.attributes || {};
-      
-      const newLastAnalysis = attrs.last_analysis || null;
+
+      const newLast = attrs.last_analysis || null;
       const newStatus = attrs.current_status || "En attente";
-      
-      // Mettre à jour les propriétés
-      this._issues = attrs.issues || [];
-      this._ignoredIssues = attrs.ignored_issues || [];
-      this._lastAnalysis = newLastAnalysis;
+      const newIssues = attrs.issues || [];
+      const newIgnored = attrs.ignored_issues || [];
+
+      const changed = (
+        newLast !== this._lastAnalysis ||
+        newStatus !== this._currentStatus ||
+        newIssues.length !== this._issues.length ||
+        newIgnored.length !== this._ignoredIssues.length
+      );
+
+      this._issues = newIssues;
+      this._ignoredIssues = newIgnored;
+      this._lastAnalysis = newLast;
       this._currentStatus = newStatus;
 
-      // Arrêter le spinner si l'analyse est terminée OU s'il y a une erreur
+      // Arrêter les spinners si l'action est terminée ou en erreur
       if (this._isAnalyzing) {
-        if (newStatus.includes("terminée") || newStatus.includes("Erreur")) {
+        if (newStatus.includes("terminée") || newStatus.includes("Erreur") || newStatus.includes("✅")) {
           this._isAnalyzing = false;
         }
       }
+      if (this._isApplying) {
+        if (!newStatus.startsWith("⏳")) {
+          this._isApplying = false;
+        }
+      }
+
+      return changed;
     }
+    return false;
   }
 
   _severityColor(severity) {
@@ -86,9 +109,12 @@ class DomolinkMistralPanel extends HTMLElement {
 
   _categoryIcon(category) {
     switch (category) {
+      case "yaml_syntax": return "📑 Syntaxe YAML";
+      case "esphome": return "⚡ ESPHome Builder";
+      case "blueprint": return "📘 Blueprint";
       case "log_error": return "📜 Erreur de log";
       case "integration": return "🔌 Intégration";
-      case "entity": return "🏷️ Entité";
+      case "entity": return "🏷️ Entité orpheline";
       case "automation": return "⚡ Automation";
       case "script": return "📝 Script";
       case "optimization": return "🚀 Optimisation";
@@ -157,9 +183,9 @@ class DomolinkMistralPanel extends HTMLElement {
         }
 
         .badge-category {
-          background: var(--divider-color, #555);
-          color: var(--primary-text-color, #eee);
-          border: 1px solid rgba(255,255,255,0.15);
+          background: rgba(150, 150, 150, 0.2);
+          color: var(--primary-text-color, #333);
+          border: 1px solid rgba(150, 150, 150, 0.3);
         }
 
         .stats-bar {
@@ -218,19 +244,14 @@ class DomolinkMistralPanel extends HTMLElement {
         .footer { margin-top: 32px; text-align: center; }
 
         /* ── Modal déplaçable ── */
-        .modal-overlay {
-          position: fixed; top: 0; left: 0; right: 0; bottom: 0;
-          z-index: 99; /* ne bloque PAS les clics derrière */
-          pointer-events: none;
-        }
         .modal {
-          position: fixed; width: 380px; max-height: 80vh;
+          position: fixed; width: 420px; max-height: 80vh;
           background: var(--card-background-color, #fff);
           border: 2px solid var(--primary-color, #03a9f4);
           border-radius: 12px; z-index: 100;
           box-shadow: 0 8px 32px rgba(0,0,0,0.25);
           color: var(--primary-text-color);
-          pointer-events: all; overflow: hidden;
+          overflow: hidden;
           display: flex; flex-direction: column;
         }
         .modal-header {
@@ -240,21 +261,22 @@ class DomolinkMistralPanel extends HTMLElement {
           user-select: none;
         }
         .modal-header:active { cursor: grabbing; }
-        .modal-body { padding: 16px; overflow-y: auto; flex: 1; line-height: 1.6; white-space: pre-wrap; }
+        .modal-body { padding: 16px; overflow-y: auto; flex: 1; line-height: 1.6; white-space: pre-wrap; font-size: 0.9em; }
         .modal-close { background: none; border: none; color: white; font-size: 1.4em; cursor: pointer; padding: 0 4px; }
 
-        /* ── Confirmation dialog ── */
+        /* ── Confirmation dialog (Stable) ── */
         .confirm-overlay {
           position: fixed; top: 0; left: 0; right: 0; bottom: 0;
-          background: rgba(0,0,0,0.5); z-index: 200;
+          background: rgba(0,0,0,0.6); z-index: 300;
           display: flex; align-items: center; justify-content: center;
         }
         .confirm-box {
           background: var(--card-background-color, #fff); padding: 24px;
-          border-radius: 12px; max-width: 400px; width: 90%;
-          box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+          border-radius: 12px; max-width: 440px; width: 90%;
+          box-shadow: 0 12px 40px rgba(0,0,0,0.4);
         }
-        .confirm-box p { margin: 0 0 20px 0; line-height: 1.5; }
+        .confirm-box h3 { margin: 0 0 12px 0; font-size: 1.2em; color: var(--primary-text-color); }
+        .confirm-box p { margin: 0 0 20px 0; line-height: 1.5; color: var(--secondary-text-color); font-size: 0.95em; }
         .confirm-buttons { display: flex; gap: 12px; justify-content: flex-end; }
 
         /* ── Responsive ── */
@@ -270,6 +292,7 @@ class DomolinkMistralPanel extends HTMLElement {
       ${this._renderHeader()}
       ${this._isAnalyzing ? this._renderLoading() : this._renderContent()}
       ${this._renderModal()}
+      ${this._renderConfirmDialog()}
     `;
 
     this._attachEvents();
@@ -299,8 +322,8 @@ class DomolinkMistralPanel extends HTMLElement {
     return `
       <div class="loading-overlay">
         ${spinnerHtml}
-        <h3 style="margin-bottom: 8px;">Analyse en cours...</h3>
-        <p style="color: var(--primary-color, #03a9f4); font-weight: 600; margin-top: 0;">
+        <h3 style="margin-bottom: 8px;">Analyse approfondie en cours...</h3>
+        <p style="color: var(--primary-color, #03a9f4); font-weight: 600; margin-top: 0; max-width: 600px; margin-left: auto; margin-right: auto;">
           ${this._currentStatus || "Initialisation..."}
         </p>
       </div>
@@ -327,10 +350,9 @@ class DomolinkMistralPanel extends HTMLElement {
 
     if (this._issues.length === 0 && this._ignoredIssues.length === 0) {
       if (!this._currentStatus || !this._currentStatus.includes("Erreur")) {
-        html += `<div class="empty-state">✅ Aucun problème détecté. Votre système est sain !</div>`;
+        html += `<div class="empty-state">✅ Aucun problème détecté dans vos logs et fichiers YAML. Votre système est sain !</div>`;
       }
     } else {
-      // Statistiques globales
       const highCount = this._issues.filter(i => i.severity === "high").length;
       const medCount = this._issues.filter(i => i.severity === "medium").length;
       const lowCount = this._issues.filter(i => i.severity === "low").length;
@@ -354,7 +376,7 @@ class DomolinkMistralPanel extends HTMLElement {
         html += `
           <div class="footer">
             <button class="btn btn-allauto" id="btn-allauto">
-              ⚡ All Auto — Sauvegarder et tout corriger
+              ⚡ All Auto — Sauvegarder et tout corriger (${this._issues.filter(i => i.auto_fix_script && i.auto_fix_script.length > 0).length} correctifs)
             </button>
           </div>
         `;
@@ -384,6 +406,7 @@ class DomolinkMistralPanel extends HTMLElement {
     const color = this._severityColor(issue.severity);
     const label = this._severityLabel(issue.severity);
     const categoryLabel = issue.category ? this._categoryIcon(issue.category) : "";
+    const hasAutoFix = issue.auto_fix_script && issue.auto_fix_script.length > 0;
 
     let buttons = "";
     if (isIgnored) {
@@ -392,7 +415,7 @@ class DomolinkMistralPanel extends HTMLElement {
       buttons = `
         <button class="btn btn-ignore btn-small" data-action="ignore" data-id="${issue.id}">Ignorer</button>
         <button class="btn btn-manual btn-small" data-action="manual" data-id="${issue.id}">📖 Manuel</button>
-        <button class="btn btn-auto btn-small" data-action="auto" data-id="${issue.id}">🔧 Automatique</button>
+        ${hasAutoFix ? `<button class="btn btn-auto btn-small" data-action="auto" data-id="${issue.id}">🔧 Automatique</button>` : ''}
       `;
     }
 
@@ -414,16 +437,33 @@ class DomolinkMistralPanel extends HTMLElement {
   _renderModal() {
     if (!this._selectedIssue) return "";
 
-    const x = this._modalPos.x !== null ? this._modalPos.x : (window.innerWidth - 400);
-    const y = this._modalPos.y !== null ? this._modalPos.y : 20;
+    const x = this._modalPos.x !== null ? this._modalPos.x : (window.innerWidth - 440);
+    const y = this._modalPos.y !== null ? this._modalPos.y : 30;
 
     return `
       <div class="modal" id="modal" style="top: ${y}px; left: ${x}px;">
         <div class="modal-header" id="modal-header">
-          📖 Guide Pas-à-Pas
+          📖 Guide Pas-à-Pas : ${this._selectedIssue.title}
           <button class="modal-close" id="modal-close">✕</button>
         </div>
-        <div class="modal-body">${this._selectedIssue.manual_fix || "Aucune instruction disponible."}</div>
+        <div class="modal-body">${this._selectedIssue.manual_fix || "Aucune instruction détaillée disponible."}</div>
+      </div>
+    `;
+  }
+
+  _renderConfirmDialog() {
+    if (!this._confirmData) return "";
+
+    return `
+      <div class="confirm-overlay" id="confirm-overlay">
+        <div class="confirm-box">
+          <h3>${this._confirmData.title || "Confirmation requise"}</h3>
+          <p>${this._confirmData.message}</p>
+          <div class="confirm-buttons">
+            <button class="btn btn-ignore" id="btn-confirm-cancel">Annuler</button>
+            <button class="btn btn-auto" id="btn-confirm-ok">Confirmer</button>
+          </div>
+        </div>
       </div>
     `;
   }
@@ -464,25 +504,59 @@ class DomolinkMistralPanel extends HTMLElement {
             }
             break;
           case "auto":
-            if (issue) this._showConfirm(
-              "Une sauvegarde sera créée, puis le correctif sera appliqué. Continuer ?",
-              () => this._hass.callService("domolink_mistral", "apply_fix", {
-                fix_script: JSON.stringify(issue.auto_fix_script)
-              })
-            );
+            if (issue) {
+              this._confirmData = {
+                title: `🔧 Réparation : ${issue.title}`,
+                message: "Une sauvegarde de sécurité sera créée avant d'appliquer la modification. Souhaitez-vous continuer ?",
+                onConfirm: () => {
+                  this._isApplying = true;
+                  this._render();
+                  this._hass.callService("domolink_mistral", "apply_fix", {
+                    fix_script: JSON.stringify(issue.auto_fix_script),
+                    issue_id: id
+                  });
+                }
+              };
+              this._render();
+            }
             break;
         }
       });
     });
 
+    // Confirmation dialog listeners
+    const btnConfirmCancel = root.getElementById("btn-confirm-cancel");
+    if (btnConfirmCancel) {
+      btnConfirmCancel.addEventListener("click", () => {
+        this._confirmData = null;
+        this._render();
+      });
+    }
+
+    const btnConfirmOk = root.getElementById("btn-confirm-ok");
+    if (btnConfirmOk) {
+      btnConfirmOk.addEventListener("click", () => {
+        const cb = this._confirmData ? this._confirmData.onConfirm : null;
+        this._confirmData = null;
+        this._render();
+        if (cb) cb();
+      });
+    }
+
     // All Auto
     const btnAllAuto = root.getElementById("btn-allauto");
     if (btnAllAuto) {
       btnAllAuto.addEventListener("click", () => {
-        this._showConfirm(
-          "Voulez-vous vraiment corriger TOUTES les erreurs affichées ? Une sauvegarde sera créée au préalable.",
-          () => this._hass.callService("domolink_mistral", "apply_all_fixes", {})
-        );
+        this._confirmData = {
+          title: "⚡ Exécuter All Auto",
+          message: "Une sauvegarde complète sera créée, puis tous les correctifs automatiques disponibles seront appliqués. Confirmer ?",
+          onConfirm: () => {
+            this._isApplying = true;
+            this._render();
+            this._hass.callService("domolink_mistral", "apply_all_fixes", {});
+          }
+        };
+        this._render();
       });
     }
 
@@ -532,28 +606,6 @@ class DomolinkMistralPanel extends HTMLElement {
       document.addEventListener("mousemove", onMove);
       document.addEventListener("mouseup", onUp);
     }
-  }
-
-  _showConfirm(message, onConfirm) {
-    const root = this.shadowRoot;
-    const overlay = document.createElement("div");
-    overlay.className = "confirm-overlay";
-    overlay.innerHTML = `
-      <div class="confirm-box">
-        <p>${message}</p>
-        <div class="confirm-buttons">
-          <button class="btn btn-ignore" id="confirm-cancel">Annuler</button>
-          <button class="btn btn-auto" id="confirm-ok">Confirmer</button>
-        </div>
-      </div>
-    `;
-    root.appendChild(overlay);
-
-    overlay.querySelector("#confirm-cancel").addEventListener("click", () => overlay.remove());
-    overlay.querySelector("#confirm-ok").addEventListener("click", () => {
-      overlay.remove();
-      onConfirm();
-    });
   }
 }
 
