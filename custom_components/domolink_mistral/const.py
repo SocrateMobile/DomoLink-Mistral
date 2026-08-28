@@ -31,7 +31,7 @@ ALLOWED_FIX_DOMAINS = {
     "input_select", "input_text", "input_datetime",
     "light", "switch", "cover", "fan", "climate", "media_player",
     "scene", "group", "timer", "counter", "number", "select",
-    "button", "text", "date", "time", "notify",
+    "button", "text", "date", "time", "notify", "homeassistant",
 }
 
 # Services explicitement interdits (même si le domaine est autorisé)
@@ -41,6 +41,17 @@ BLOCKED_SERVICES = {
     "hassio.host_shutdown",
     "hassio.host_reboot",
     "hassio.addon_stop",
+}
+
+# Fichiers YAML autorisés pour la modification automatique
+ALLOWED_YAML_FILES = {
+    "configuration.yaml",
+    "automations.yaml",
+    "automation.yaml",
+    "scripts.yaml",
+    "script.yaml",
+    "scenes.yaml",
+    "scene.yaml",
 }
 
 STORAGE_KEY = "domolink_mistral.ignored_issues"
