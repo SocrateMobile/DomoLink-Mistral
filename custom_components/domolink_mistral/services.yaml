@@ -69,3 +69,61 @@ save_automation:
         text:
           multiline: true
 
+analyze_image:
+  name: Analyze image (Pixtral Vision)
+  description: Analyzes a camera snapshot or local image file using Mistral Pixtral multimodal vision.
+  fields:
+    camera_entity_id:
+      name: Camera entity
+      description: The camera entity to take a snapshot from.
+      required: false
+      selector:
+        entity:
+          domain: camera
+    image_path:
+      name: Image file path
+      description: Local path to an image file if not using a camera entity.
+      required: false
+      selector:
+        text:
+    prompt:
+      name: Prompt / Question
+      description: What to analyze or look for in the image.
+      required: false
+      selector:
+        text:
+          multiline: true
+    model:
+      name: Model
+      description: Pixtral vision model to use.
+      required: false
+      default: pixtral-12b-2409
+      selector:
+        text:
+
+generate_daily_briefing:
+  name: Generate daily briefing
+  description: Compiles household states (weather, lights, doors, batteries) into a warm, concise daily briefing.
+  fields:
+    time_of_day:
+      name: Time of day
+      description: Context of the briefing (morning, evening, or auto).
+      required: false
+      default: auto
+      selector:
+        select:
+          options:
+            - label: Automatique (selon l'heure)
+              value: auto
+            - label: Matin
+              value: morning
+            - label: Soir
+              value: evening
+    custom_instruction:
+      name: Custom instruction
+      description: Optional special instruction (e.g. Include a quote).
+      required: false
+      selector:
+        text:
+
+

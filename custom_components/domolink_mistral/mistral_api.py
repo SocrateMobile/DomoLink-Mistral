@@ -294,3 +294,123 @@ async def process_conversation_with_mistral(
         }
 
 
+PIXTRAL_DEFAULT_MODEL = "pixtral-12b-2409"
+
+
+async def analyze_image_with_pixtral(
+    hass: HomeAssistant,
+    api_key: str,
+    base64_image: str,
+    prompt: str = "Décris précisément ce que tu vois sur cette image. Détecte les personnes, véhicules, colis, ouvertures ou anomalies.",
+    model: str = PIXTRAL_DEFAULT_MODEL,
+    mime_type: str = "image/jpeg",
+) -> dict:
+    """Analyse une image de caméra via le modèle multimodal Pixtral."""
+    session = async_get_clientsession(hass)
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+    }
+
+    system_instruction = (
+        "Tu es l'agent de surveillance visuelle de Home Assistant. "
+        "Analyse l'image fournie et réponds UNIQUEMENT en JSON avec la structure :\n"
+        "{\n"
+        '  "summary": "Court résumé en 1 phrase",\n'
+        '  "description": "Description détaillée de la scène",\n'
+        '  "anomalies_detected": true/false,\n'
+        '  "objects_detected": ["personne", "colis", "véhicule", ...],\n'
+        '  "security_alert": true/false\n'
+        "}"
+    )
+
+    payload = {
+        "model": model,
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": f"{system_instruction}\n\nQuestion de l'utilisateur : {prompt}"},
+                    {"type": "image_url", "image_url": f"data:{mime_type};base64,{base64_image}"},
+                ],
+            }
+        ],
+        "response_format": {"type": "json_object"},
+        "temperature": 0.1,
+    }
+
+    try:
+        async with session.post(
+            MISTRAL_URL, headers=headers, json=payload, timeout=API_TIMEOUT
+        ) as response:
+            response.raise_for_status()
+            data = await response.json()
+            content = data["choices"][0]["message"]["content"]
+            result = json.loads(content)
+            return {"success": True, "data": result}
+    except Exception as e:
+        _LOGGER.error("DomoLink-Mistral Vision: Erreur analyse image Pixtral: %s", e)
+        return {"success": False, "error": str(e)}
+
+
+async def generate_daily_briefing_with_mistral(
+    hass: HomeAssistant,
+    api_key: str,
+    model: str,
+    system_data: str,
+    time_of_day: str = "morning",
+    custom_instruction: str = "",
+) -> dict:
+    """Génère un briefing domotique synthétique et chaleureux (pour TTS ou notification)."""
+    session = async_get_clientsession(hass)
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+    }
+
+    moment_fr = "matin" if time_of_day == "morning" else ("soir" if time_of_day == "evening" else "journée")
+
+    prompt = f"""Tu es l'assistant de la maison. Rédige un briefing pour le {moment_fr}.
+Voici les données actuelles de la maison :
+{system_data}
+
+{f"Instruction particulière : {custom_instruction}" if custom_instruction else ""}
+
+Consignes :
+1. Ton texte doit être fluide, bienveillant, naturel et agréable à écouter vocalement.
+2. Signale les points d'attention importants (portes ouvertes, batteries faibles <20%, alertes météo).
+3. Reste concis (3 à 5 phrases au maximum).
+
+Réponds UNIQUEMENT en JSON avec la structure :
+{{
+  "title": "Titre du briefing",
+  "speech_text": "Le texte complet destiné à être lu oralement",
+  "highlights": ["Point 1", "Point 2", "Point 3"]
+}}"""
+
+    payload = {
+        "model": model,
+        "messages": [
+            {"role": "user", "content": prompt},
+        ],
+        "response_format": {"type": "json_object"},
+        "temperature": 0.3,
+    }
+
+    try:
+        async with session.post(
+            MISTRAL_URL, headers=headers, json=payload, timeout=API_TIMEOUT
+        ) as response:
+            response.raise_for_status()
+            data = await response.json()
+            content = data["choices"][0]["message"]["content"]
+            result = json.loads(content)
+            return {"success": True, "data": result}
+    except Exception as e:
+        _LOGGER.error("DomoLink-Mistral Briefing: Erreur génération briefing: %s", e)
+        return {"success": False, "error": str(e)}
+
+
+

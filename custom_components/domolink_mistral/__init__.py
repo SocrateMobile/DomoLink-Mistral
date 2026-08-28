@@ -441,6 +441,141 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         )
         return res
 
+    async def handle_analyze_image(call):
+        """Service : domolink_mistral.analyze_image (Vision par Pixtral)."""
+        import base64
+        from .mistral_api import analyze_image_with_pixtral, PIXTRAL_DEFAULT_MODEL
+
+        camera_entity_id = call.data.get("camera_entity_id")
+        image_path = call.data.get("image_path")
+        prompt = call.data.get(
+            "prompt",
+            "Décris précisément ce que tu vois sur cette image. Détecte les personnes, véhicules, colis, ouvertures ou anomalies.",
+        )
+        model = call.data.get("model", PIXTRAL_DEFAULT_MODEL)
+
+        image_bytes = None
+        mime_type = "image/jpeg"
+
+        # Cas 1 : Capture directe depuis une caméra Home Assistant
+        if camera_entity_id:
+            try:
+                from homeassistant.components import camera
+                image = await camera.async_get_image(hass, camera_entity_id)
+                image_bytes = image.content
+                mime_type = image.content_type or "image/jpeg"
+            except Exception as e:
+                _LOGGER.error("DomoLink-Mistral Vision: Échec capture caméra %s: %s", camera_entity_id, e)
+                return {"success": False, "error": f"Échec capture caméra : {e}"}
+
+        # Cas 2 : Fichier image local
+        elif image_path:
+            def _read_file():
+                with open(image_path, "rb") as f:
+                    return f.read()
+
+            try:
+                image_bytes = await hass.async_add_executor_job(_read_file)
+                if image_path.lower().endswith(".png"):
+                    mime_type = "image/png"
+            except Exception as e:
+                _LOGGER.error("DomoLink-Mistral Vision: Échec lecture fichier %s: %s", image_path, e)
+                return {"success": False, "error": f"Échec lecture fichier : {e}"}
+
+        if not image_bytes:
+            return {"success": False, "error": "Aucune source d'image fournie (camera_entity_id ou image_path requis)"}
+
+        b64_str = base64.b64encode(image_bytes).decode("utf-8")
+        api_key = hass.data[DOMAIN][entry.entry_id]["api_key"]
+
+        sensor = hass.data[DOMAIN][entry.entry_id].get("sensor")
+        if sensor:
+            sensor.set_status("👁️ Analyse de l'image de caméra via Pixtral...")
+
+        res = await analyze_image_with_pixtral(
+            hass, api_key=api_key, base64_image=b64_str, prompt=prompt, model=model, mime_type=mime_type
+        )
+
+        if res.get("success"):
+            data = res.get("data", {})
+            if sensor:
+                sensor.set_status(f"👁️ Analyse caméra : {data.get('summary', 'Terminée')}")
+            hass.bus.async_fire("domolink_mistral_image_analyzed", data)
+            return data
+        else:
+            err = res.get("error", "Erreur inconnue")
+            if sensor:
+                sensor.set_status(f"❌ Échec analyse image : {err}")
+            return {"success": False, "error": err}
+
+    async def handle_generate_daily_briefing(call):
+        """Service : domolink_mistral.generate_daily_briefing (Briefing matinal/soirée)."""
+        from .mistral_api import generate_daily_briefing_with_mistral
+
+        time_of_day = call.data.get("time_of_day", "auto")
+        custom_instruction = call.data.get("custom_instruction", "")
+
+        if time_of_day == "auto":
+            import datetime
+            hour = datetime.datetime.now().hour
+            time_of_day = "morning" if hour < 14 else "evening"
+
+        # Collecte synthétique des données
+        summary_lines = []
+        
+        # Météo
+        weather_states = [s for s in hass.states.async_all("weather")]
+        if weather_states:
+            w = weather_states[0]
+            summary_lines.append(f"Météo actuelle : {w.state}, Température : {w.attributes.get('temperature')}°C, Humidité : {w.attributes.get('humidity')}%")
+
+        # Lumières allumées
+        lights_on = [s.attributes.get("friendly_name", s.entity_id) for s in hass.states.async_all("light") if s.state == "on"]
+        if lights_on:
+            summary_lines.append(f"Lumières allumées ({len(lights_on)}) : {', '.join(lights_on[:10])}")
+        else:
+            summary_lines.append("Toutes les lumières sont éteintes.")
+
+        # Portes / Fenêtres ouvertes
+        openings = [s.attributes.get("friendly_name", s.entity_id) for s in hass.states.async_all("binary_sensor") if s.attributes.get("device_class") in ("door", "window", "garage_door", "opening") and s.state == "on"]
+        if openings:
+            summary_lines.append(f"⚠️ Ouvertures ouvertes ({len(openings)}) : {', '.join(openings)}")
+        else:
+            summary_lines.append("Toutes les portes et fenêtres sont fermées.")
+
+        # Batteries faibles (<20%)
+        low_batteries = [
+            f"{s.attributes.get('friendly_name', s.entity_id)} ({s.state}%)"
+            for s in hass.states.async_all("sensor")
+            if s.attributes.get("device_class") == "battery" and s.state.isdigit() and int(s.state) < 20
+        ]
+        if low_batteries:
+            summary_lines.append(f"⚠️ Batteries faibles : {', '.join(low_batteries)}")
+
+        system_data = "\n".join(summary_lines)
+        api_key = hass.data[DOMAIN][entry.entry_id]["api_key"]
+        model = hass.data[DOMAIN][entry.entry_id]["options"].get("model", "mistral-large-latest")
+
+        sensor = hass.data[DOMAIN][entry.entry_id].get("sensor")
+        if sensor:
+            sensor.set_status("📰 Génération du Smart Briefing en cours...")
+
+        res = await generate_daily_briefing_with_mistral(
+            hass, api_key=api_key, model=model, system_data=system_data, time_of_day=time_of_day, custom_instruction=custom_instruction
+        )
+
+        if res.get("success"):
+            data = res.get("data", {})
+            if sensor:
+                sensor.set_status("✅ Briefing généré avec succès !")
+            hass.bus.async_fire("domolink_mistral_daily_briefing_generated", data)
+            return data
+        else:
+            err = res.get("error", "Erreur inconnue")
+            if sensor:
+                sensor.set_status(f"❌ Échec briefing : {err}")
+            return {"success": False, "error": err}
+
     # ── Enregistrement des services ──
     hass.services.async_register(DOMAIN, "analyze_now", handle_analyze_now)
     hass.services.async_register(DOMAIN, "apply_fix", handle_apply_fix)
@@ -449,6 +584,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass.services.async_register(DOMAIN, "apply_all_fixes", handle_apply_all_fixes)
     hass.services.async_register(DOMAIN, "generate_automation", handle_generate_automation)
     hass.services.async_register(DOMAIN, "save_automation", handle_save_automation)
+    hass.services.async_register(DOMAIN, "analyze_image", handle_analyze_image)
+    hass.services.async_register(DOMAIN, "generate_daily_briefing", handle_generate_daily_briefing)
 
     # ═══════════════════════════════════════════════════════
     # PLANIFICATION DES ANALYSES (Live / Boot / Manuel)
@@ -509,6 +646,8 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         "apply_all_fixes",
         "generate_automation",
         "save_automation",
+        "analyze_image",
+        "generate_daily_briefing",
     ]:
         hass.services.async_remove(DOMAIN, service_name)
 
