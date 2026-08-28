@@ -240,3 +240,83 @@ async def apply_fix(hass: HomeAssistant, fix_payload) -> dict:
     success = applied > 0 and skipped == 0
     _LOGGER.info("DomoLink-Mistral: Réparation terminée — %s appliqué(s), %s ignoré(s).", applied, skipped)
     return {"success": success, "applied": applied, "skipped": skipped, "details": details}
+
+
+async def append_automation_to_yaml(hass: HomeAssistant, automation_yaml: str) -> dict:
+    """Ajoute une nouvelle automation générée par Mistral dans automations.yaml."""
+    def _do_append():
+        config_dir = hass.config.config_dir
+        target_path = os.path.join(config_dir, "automations.yaml")
+        if not os.path.exists(target_path):
+            alt_path = os.path.join(config_dir, "automation.yaml")
+            if os.path.exists(alt_path):
+                target_path = alt_path
+
+        # 1. Backup préalable
+        if os.path.exists(target_path):
+            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+            backup_path = f"{target_path}.{ts}.bak"
+            try:
+                shutil.copy2(target_path, backup_path)
+                _LOGGER.info("DomoLink-Mistral: Backup automations créé -> %s", backup_path)
+            except Exception as e:
+                return {"success": False, "message": f"Échec sauvegarde automations.yaml: {e}"}
+
+        # 2. Nettoyage du YAML fourni
+        cleaned = automation_yaml.strip()
+        if cleaned.startswith("```yaml"):
+            cleaned = cleaned[7:]
+        elif cleaned.startswith("```"):
+            cleaned = cleaned[3:]
+        if cleaned.endswith("```"):
+            cleaned = cleaned[:-3]
+        cleaned = cleaned.strip()
+
+        # S'assurer que le bloc commence par un tiret si c'est une liste
+        lines = cleaned.splitlines()
+        if lines and not lines[0].strip().startswith("-"):
+            # Ajouter le tiret au premier élément et indenter le reste
+            formatted_lines = [f"- {lines[0]}"]
+            for l in lines[1:]:
+                formatted_lines.append(f"  {l}")
+            cleaned = "\n".join(formatted_lines)
+
+        # 3. Lecture du fichier existant
+        existing = ""
+        if os.path.exists(target_path):
+            with open(target_path, "r", encoding="utf-8") as f:
+                existing = f.read().rstrip()
+
+        combined = existing + "\n\n" + cleaned + "\n" if existing else cleaned + "\n"
+
+        # 4. Validation syntaxique
+        try:
+            import yaml
+            class _SafeLoader(yaml.SafeLoader):
+                pass
+            def _dummy(loader, tag, node):
+                return None
+            _SafeLoader.add_multi_constructor("!", _dummy)
+            yaml.load(combined, Loader=_SafeLoader)
+        except Exception as yaml_err:
+            _LOGGER.error("DomoLink-Mistral: Erreur syntaxe automation générée: %s", yaml_err)
+            return {"success": False, "message": f"YAML invalide : {yaml_err}"}
+
+        # 5. Écriture
+        with open(target_path, "w", encoding="utf-8") as f:
+            f.write(combined)
+
+        _LOGGER.info("DomoLink-Mistral: Nouvelle automation ajoutée à %s", target_path)
+        return {"success": True, "file": os.path.basename(target_path)}
+
+    res = await hass.async_add_executor_job(_do_append)
+    if res.get("success"):
+        # Recharger les automations
+        if hass.services.has_service("automation", "reload"):
+            await hass.services.async_call("automation", "reload", {}, blocking=True)
+            res["message"] = "Automation injectée et rechargée avec succès dans Home Assistant !"
+        else:
+            res["message"] = "Automation enregistrée dans automations.yaml."
+
+    return res
+
