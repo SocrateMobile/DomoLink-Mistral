@@ -44,3 +44,28 @@ unignore_issue:
 apply_all_fixes:
   name: Apply all fixes
   description: Creates a backup then applies all available automatic fixes sequentially.
+
+generate_automation:
+  name: Generate automation
+  description: Generates a complete Home Assistant automation YAML using Mistral AI from natural language.
+  fields:
+    prompt:
+      name: Description
+      description: What you want the automation to do in natural language.
+      required: true
+      selector:
+        text:
+          multiline: true
+
+save_automation:
+  name: Save automation
+  description: Appends a generated automation into automations.yaml and reloads automations.
+  fields:
+    yaml:
+      name: Automation YAML
+      description: The YAML content of the automation to add.
+      required: true
+      selector:
+        text:
+          multiline: true
+

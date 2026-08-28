@@ -376,12 +376,79 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             },
         )
 
+    async def handle_generate_automation(call):
+        """Service : domolink_mistral.generate_automation"""
+        from .mistral_api import generate_automation_with_mistral
+
+        prompt = call.data.get("prompt", "").strip()
+        if not prompt:
+            _LOGGER.error("DomoLink-Mistral: Prompt vide pour la génération d'automation.")
+            return {"success": False, "error": "Prompt vide"}
+
+        api_key = hass.data[DOMAIN][entry.entry_id]["api_key"]
+        model = hass.data[DOMAIN][entry.entry_id]["options"].get(
+            "model", "mistral-large-latest"
+        )
+
+        sensor = hass.data[DOMAIN][entry.entry_id].get("sensor")
+        if sensor:
+            sensor.set_status("✨ Génération de l'automation en cours par Mistral...")
+
+        result = await generate_automation_with_mistral(hass, api_key, model, prompt)
+        
+        if result.get("success"):
+            data = result.get("data", {})
+            hass.data[DOMAIN][entry.entry_id]["last_generated_automation"] = data
+            if sensor:
+                sensor.set_status(f"✅ Automation '{data.get('title', 'Nouvelle automation')}' générée avec succès !")
+            # Déclencher un event HA pour notifier le frontend
+            hass.bus.async_fire("domolink_mistral_automation_generated", data)
+            return data
+        else:
+            err = result.get("error", "Erreur inconnue")
+            if sensor:
+                sensor.set_status(f"❌ Échec génération automation : {err}")
+            return {"success": False, "error": err}
+
+    async def handle_save_automation(call):
+        """Service : domolink_mistral.save_automation"""
+        from .reparator import append_automation_to_yaml
+
+        yaml_content = call.data.get("yaml", "").strip()
+        if not yaml_content:
+            _LOGGER.error("DomoLink-Mistral: Code YAML vide.")
+            return {"success": False, "error": "Code YAML vide"}
+
+        sensor = hass.data[DOMAIN][entry.entry_id].get("sensor")
+        if sensor:
+            sensor.set_status("💾 Enregistrement de l'automation dans automations.yaml...")
+
+        res = await append_automation_to_yaml(hass, yaml_content)
+        if sensor:
+            if res.get("success"):
+                sensor.set_status("✅ Automation injectée et active dans Home Assistant !")
+            else:
+                sensor.set_status(f"❌ {res.get('message')}")
+
+        await hass.services.async_call(
+            "persistent_notification",
+            "create",
+            {
+                "title": "🧠 DomoLink-Mistral — Automation ajoutée",
+                "message": res.get("message", "Opération terminée."),
+                "notification_id": "domolink_mistral_auto_created",
+            },
+        )
+        return res
+
     # ── Enregistrement des services ──
     hass.services.async_register(DOMAIN, "analyze_now", handle_analyze_now)
     hass.services.async_register(DOMAIN, "apply_fix", handle_apply_fix)
     hass.services.async_register(DOMAIN, "ignore_issue", handle_ignore_issue)
     hass.services.async_register(DOMAIN, "unignore_issue", handle_unignore_issue)
     hass.services.async_register(DOMAIN, "apply_all_fixes", handle_apply_all_fixes)
+    hass.services.async_register(DOMAIN, "generate_automation", handle_generate_automation)
+    hass.services.async_register(DOMAIN, "save_automation", handle_save_automation)
 
     # ═══════════════════════════════════════════════════════
     # PLANIFICATION DES ANALYSES (Live / Boot / Manuel)
@@ -440,6 +507,8 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         "ignore_issue",
         "unignore_issue",
         "apply_all_fixes",
+        "generate_automation",
+        "save_automation",
     ]:
         hass.services.async_remove(DOMAIN, service_name)
 
