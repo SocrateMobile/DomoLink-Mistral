@@ -86,7 +86,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         config={
             "_panel_custom": {
                 "name": "domolink-mistral-panel",
-                "module_url": "/domolink_mistral_frontend/domolink-mistral-panel.js?v=2.8.0",
+                "module_url": "/domolink_mistral_frontend/domolink-mistral-panel.js?v=2.9.0",
             }
         },
         require_admin=True,
