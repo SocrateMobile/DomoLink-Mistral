@@ -676,8 +676,14 @@ class DomolinkMistralPanel extends HTMLElement {
           </div>
 
           <div class="chat-input-bar">
-            <input type="text" class="chat-input" id="chat-input-text" placeholder="Parlez ou écrivez à Mistral AI..." value="${this._chatInput}">
-            <button class="btn btn-primary" id="btn-chat-send" ${this._isAssisting ? "disabled" : ""}>
+            <select class="input-field" id="chat-camera-select" style="width: auto; margin-bottom: 0; padding: 12px; border-radius: 8px 0 0 8px; border-right: none;">
+              <option value="">📸 Joindre une caméra...</option>
+              ${Object.keys(this._hass.states).filter(id => id.startsWith("camera.")).map(id => `
+                <option value="${id}">${this._hass.states[id].attributes.friendly_name || id}</option>
+              `).join("")}
+            </select>
+            <input type="text" class="chat-input" id="chat-input-text" style="border-radius: 0; border-left: 1px solid var(--divider-color, #ccc);" placeholder="Parlez ou écrivez à Mistral AI..." value="${this._chatInput}">
+            <button class="btn btn-primary" id="btn-chat-send" style="border-radius: 0 8px 8px 0;" ${this._isAssisting ? "disabled" : ""}>
               ${this._isAssisting ? '<span class="spinner"></span>' : 'Envoyer 📤'}
             </button>
           </div>
@@ -1073,27 +1079,65 @@ class DomolinkMistralPanel extends HTMLElement {
     if (btnChatSend) {
       btnChatSend.addEventListener("click", async () => {
         const text = this._chatInput.trim();
-        if (!text) return;
+        const camSelect = root.getElementById("chat-camera-select");
+        const camId = camSelect ? camSelect.value : "";
 
-        this._chatMessages.push({ role: "user", text, services: [] });
+        // Si aucun texte et aucune caméra, on ne fait rien
+        if (!text && !camId) return;
+
+        // Message par défaut si image seule
+        const promptText = text || "Décris ce que tu vois.";
+
+        let userMsg = text;
+        if (camId) {
+          const camName = this._hass.states[camId]?.attributes?.friendly_name || camId;
+          userMsg = `📸 [${camName}] ${promptText}`;
+        }
+
+        this._chatMessages.push({ role: "user", text: userMsg || promptText, services: [] });
         this._chatInput = "";
         this._isAssisting = true;
         this._render();
 
         try {
-          const resp = await this._hass.callWS({
-            type: "conversation/process",
-            text: text,
-            agent_id: "conversation.domolink_mistral_mistral_ai"
-          });
+          if (camId) {
+            // Analyse Vision Multimodale (Pixtral)
+            const resp = await this._hass.callService("domolink_mistral", "analyze_image", {
+              camera_entity_id: camId,
+              prompt: promptText
+            });
 
-          const speech = resp?.response?.speech?.plain?.speech || "Action effectuée.";
-          this._chatMessages.push({ role: "assistant", text: speech, services: [] });
+            if (resp && resp.response) {
+              const v = resp.response;
+              let replyHtml = `<strong style="color:var(--primary-color);">👁️ Analyse de l'image :</strong><br>${v.summary || ""}<br><br><span style="opacity:0.9">${v.description || ""}</span>`;
+              if (v.objects_detected && v.objects_detected.length > 0) {
+                 replyHtml += `<div style="margin-top:8px;"><strong>Objets détectés :</strong> ${v.objects_detected.join(", ")}</div>`;
+              }
+              if (v.security_alert || v.anomalies_detected) {
+                 replyHtml = `<span style="color:#f44336;">🚨 <strong>ALERTE DE SÉCURITÉ :</strong></span><br>${replyHtml}`;
+              }
+              this._chatMessages.push({ role: "assistant", text: replyHtml, services: [] });
+            } else {
+              this._chatMessages.push({ role: "assistant", text: "Erreur lors de l'analyse d'image.", services: [] });
+            }
+            
+            // Réinitialiser la sélection de la caméra après l'envoi
+            if (camSelect) camSelect.value = "";
+          } else {
+            // Chat texte normal
+            const resp = await this._hass.callWS({
+              type: "conversation/process",
+              text: text,
+              agent_id: "conversation.domolink_mistral_mistral_ai"
+            });
+
+            const speech = resp?.response?.speech?.plain?.speech || "Action effectuée.";
+            this._chatMessages.push({ role: "assistant", text: speech, services: [] });
+          }
         } catch (e) {
-          // Fallback via appel direct si agent_id WS non prêt
           this._chatMessages.push({
             role: "assistant",
-            text: "Commande transmise à Home Assistant.",
+            text: "Erreur de communication avec Mistral AI ou Home Assistant.",
             services: []
           });
         } finally {
