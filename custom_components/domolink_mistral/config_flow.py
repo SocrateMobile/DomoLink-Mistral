@@ -106,6 +106,48 @@ class DomolinkMistralConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             ),
         )
 
+    @staticmethod
+    def async_get_options_flow(
+        config_entry: config_entries.ConfigEntry,
+    ) -> config_entries.OptionsFlow:
+        """Crée le gestionnaire d'options."""
+        return DomolinkMistralOptionsFlowHandler(config_entry)
+
+
+class DomolinkMistralOptionsFlowHandler(config_entries.OptionsFlow):
+    """Gère la modification des paramètres post-installation."""
+
+    def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
+        """Initialisation."""
+        self.config_entry = config_entry
+
+    async def async_step_init(
+        self, user_input: dict[str, Any] | None = None
+    ) -> config_entries.FlowResult:
+        """Gère les options modifiables."""
+        if user_input is not None:
+            return self.async_create_entry(title="", data=user_input)
+
+        current_options = self.config_entry.options
+        current_model = current_options.get(CONF_MODEL, MODELS[0])
+        current_mode = current_options.get(CONF_SCAN_MODE, "live")
+        current_freq = current_options.get(CONF_SCAN_FREQUENCY, 1)
+
+        return self.async_show_form(
+            step_id="init",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(CONF_MODEL, default=current_model): vol.In(MODELS),
+                    vol.Required(CONF_SCAN_MODE, default=current_mode): vol.In(
+                        list(SCAN_MODES.keys())
+                    ),
+                    vol.Optional(CONF_SCAN_FREQUENCY, default=current_freq): vol.All(
+                        vol.Coerce(int), vol.Range(min=1, max=24)
+                    ),
+                }
+            ),
+        )
+
 
 class InvalidAuth(HomeAssistantError):
     """Erreur : clé API invalide."""

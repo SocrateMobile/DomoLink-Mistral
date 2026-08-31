@@ -24,27 +24,26 @@ _LOGGER = logging.getLogger(__name__)
 
 # ── Expressions régulières pour détecter et masquer les données sensibles ──
 SENSITIVE_PATTERNS = [
-    # Mots de passe, clés API, secrets, tokens
+    # Mots de passe, clés API, secrets, tokens, identifiants WiFi
     (
         re.compile(
-            r'(?i)((?:password|secret|api_key|api\.key|token|access_token|'
-            r'client_secret|private_key|bearer|wifi_password|auth_token)[\s:="\']+)[^\s,\]}"\']+',
+            r'(?i)((?:password|passwd|secret|api_key|api\.key|access_token|'
+            r'client_secret|private_key|bearer|wifi_password|auth_token|pin_code)[\s:="\']+)[^\s,\]}"\']+',
         ),
         r"\1[REDACTED]",
     ),
     # URLs avec credentials intégrées (user:pass@host)
-    (re.compile(r"://[^:]+:[^@]+@"), "://[CREDENTIALS]@"),
-    # Adresses IPv4
-    (re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b"), "[IP_REMOVED]"),
-    # Adresses IPv6 complètes
-    (re.compile(r"\b(?:[a-fA-F0-9]{1,4}:){7}[a-fA-F0-9]{1,4}\b"), "[IPV6_REMOVED]"),
+    (re.compile(r"://[^:\s]+:[^@\s]+@"), "://[CREDENTIALS]@"),
     # Tokens longs type JWT (xxx.yyy.zzz)
     (
-        re.compile(r"[a-zA-Z0-9_-]{20,}\.[a-zA-Z0-9_-]{15,}\.[a-zA-Z0-9_-]{20,}"),
-        "[TOKEN_REMOVED]",
+        re.compile(r"\beyJ[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]{10,}\b"),
+        "[JWT_TOKEN_REMOVED]",
     ),
-    # Chaînes hexadécimales longues (clés API, hashes)
-    (re.compile(r"\b[a-fA-F0-9]{32,}\b"), "[HEX_KEY_REMOVED]"),
+    # Clés API préfixées connues (Mistral, OpenAI, GitHub, etc.)
+    (
+        re.compile(r"\b(?:sk-[a-zA-Z0-9]{20,}|ghp_[a-zA-Z0-9]{20,}|glpat-[a-zA-Z0-9_-]{20,})\b"),
+        "[API_KEY_REMOVED]",
+    ),
 ]
 
 

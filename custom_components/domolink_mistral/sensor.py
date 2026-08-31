@@ -10,7 +10,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity import DeviceInfo
 
-from .const import DOMAIN
+from .const import DOMAIN, VERSION
 
 
 async def async_setup_entry(
@@ -51,7 +51,7 @@ class DomolinkMistralSensor(SensorEntity):
             name="DomoLink-Mistral",
             manufacturer="SocrateMobile",
             model="Mistral AI Log Analyzer",
-            sw_version="2.1.0",
+            sw_version=VERSION,
         )
 
     @property

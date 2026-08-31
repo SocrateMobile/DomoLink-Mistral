@@ -4,6 +4,7 @@ Envoie les données système, logs et fichiers YAML à l'API Mistral et parse la
 """
 import logging
 import json
+import re
 
 import aiohttp
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
@@ -14,6 +15,19 @@ _LOGGER = logging.getLogger(__name__)
 MISTRAL_URL = "https://api.mistral.ai/v1/chat/completions"
 MISTRAL_MODELS_URL = "https://api.mistral.ai/v1/models"
 API_TIMEOUT = aiohttp.ClientTimeout(total=120)
+
+
+def _safe_json_loads(content: str) -> dict:
+    """Nettoie et parse de manière robuste une réponse JSON de Mistral."""
+    if not content:
+        return {}
+    cleaned = content.strip()
+    # Supprimer les balises ```json ou ``` éventuelles
+    if cleaned.startswith("```"):
+        cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned, flags=re.IGNORECASE)
+        cleaned = re.sub(r"\s*```$", "", cleaned)
+    cleaned = cleaned.strip()
+    return json.loads(cleaned)
 
 SYSTEM_PROMPT = """Tu es un expert senior en domotique, en Home Assistant et en ESPHome.
 Tu analyses un diagnostic approfondi d'une instance Home Assistant contenant :
@@ -111,7 +125,7 @@ async def analyze_with_mistral(
             response.raise_for_status()
             data = await response.json()
             content = data["choices"][0]["message"]["content"]
-            result = json.loads(content)
+            result = _safe_json_loads(content)
 
             if "issues" not in result:
                 result = {"issues": []}
@@ -206,7 +220,7 @@ Génère l'automation correspondante au format JSON structuré."""
             response.raise_for_status()
             data = await response.json()
             content = data["choices"][0]["message"]["content"]
-            result = json.loads(content)
+            result = _safe_json_loads(content)
             return {"success": True, "data": result}
     except Exception as e:
         _LOGGER.error("DomoLink-Mistral: Erreur lors de la génération d'automation: %s", e)
@@ -279,7 +293,7 @@ async def process_conversation_with_mistral(
             response.raise_for_status()
             data = await response.json()
             content = data["choices"][0]["message"]["content"]
-            result = json.loads(content)
+            result = _safe_json_loads(content)
             return {
                 "success": True,
                 "response_text": result.get("response_text", "D'accord."),
@@ -347,7 +361,7 @@ async def analyze_image_with_pixtral(
             response.raise_for_status()
             data = await response.json()
             content = data["choices"][0]["message"]["content"]
-            result = json.loads(content)
+            result = _safe_json_loads(content)
             return {"success": True, "data": result}
     except Exception as e:
         _LOGGER.error("DomoLink-Mistral Vision: Erreur analyse image Pixtral: %s", e)
@@ -406,7 +420,7 @@ Réponds UNIQUEMENT en JSON avec la structure :
             response.raise_for_status()
             data = await response.json()
             content = data["choices"][0]["message"]["content"]
-            result = json.loads(content)
+            result = _safe_json_loads(content)
             return {"success": True, "data": result}
     except Exception as e:
         _LOGGER.error("DomoLink-Mistral Briefing: Erreur génération briefing: %s", e)

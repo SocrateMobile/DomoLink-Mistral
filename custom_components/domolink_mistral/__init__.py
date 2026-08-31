@@ -14,7 +14,7 @@ from datetime import timedelta
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EVENT_HOMEASSISTANT_STARTED
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, SupportsResponse
 from homeassistant.helpers.event import (
     async_call_later,
     async_track_time_interval,
@@ -86,11 +86,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         config={
             "_panel_custom": {
                 "name": "domolink-mistral-panel",
-                "module_url": "/domolink_mistral_frontend/domolink-mistral-panel.js?v=2.9.0",
+                "module_url": "/domolink_mistral_frontend/domolink-mistral-panel.js?v=2.9.1",
             }
         },
         require_admin=True,
     )
+
+    # ── Écouteur de mise à jour des options (rechargement à chaud) ──
+    entry.async_on_unload(entry.add_update_listener(async_reload_entry))
 
     # ═══════════════════════════════════════════════════════
     # SERVICES
@@ -582,10 +585,18 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass.services.async_register(DOMAIN, "ignore_issue", handle_ignore_issue)
     hass.services.async_register(DOMAIN, "unignore_issue", handle_unignore_issue)
     hass.services.async_register(DOMAIN, "apply_all_fixes", handle_apply_all_fixes)
-    hass.services.async_register(DOMAIN, "generate_automation", handle_generate_automation)
-    hass.services.async_register(DOMAIN, "save_automation", handle_save_automation)
-    hass.services.async_register(DOMAIN, "analyze_image", handle_analyze_image)
-    hass.services.async_register(DOMAIN, "generate_daily_briefing", handle_generate_daily_briefing)
+    hass.services.async_register(
+        DOMAIN, "generate_automation", handle_generate_automation, supports_response=SupportsResponse.OPTIONAL
+    )
+    hass.services.async_register(
+        DOMAIN, "save_automation", handle_save_automation, supports_response=SupportsResponse.OPTIONAL
+    )
+    hass.services.async_register(
+        DOMAIN, "analyze_image", handle_analyze_image, supports_response=SupportsResponse.OPTIONAL
+    )
+    hass.services.async_register(
+        DOMAIN, "generate_daily_briefing", handle_generate_daily_briefing, supports_response=SupportsResponse.OPTIONAL
+    )
 
     # ═══════════════════════════════════════════════════════
     # PLANIFICATION DES ANALYSES (Live / Boot / Manuel)
@@ -619,7 +630,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             cancel = async_call_later(hass, 180, _delayed_analysis)
             cancel_listeners.append(cancel)
 
-        hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STARTED, _boot_callback)
+        unsub = hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STARTED, _boot_callback)
+        cancel_listeners.append(unsub)
 
     else:
         _LOGGER.info("DomoLink-Mistral: Mode Manuel — analyse uniquement à la demande.")
@@ -630,12 +642,20 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     return True
 
 
+async def async_reload_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Recharge l'intégration lorsque les options sont modifiées."""
+    await hass.config_entries.async_reload(entry.entry_id)
+
+
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Décharge proprement l'intégration."""
     # Annuler tous les timers/listeners
     data = hass.data[DOMAIN].get(entry.entry_id, {})
     for cancel in data.get("cancel_listeners", []):
-        cancel()
+        try:
+            cancel()
+        except Exception:
+            pass
 
     # Désenregistrer les services
     for service_name in [
