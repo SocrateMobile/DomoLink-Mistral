@@ -18,7 +18,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.intent import IntentResponse, IntentResponseType
 
-from .const import DOMAIN
+from .const import DOMAIN, VERSION
 from .mistral_api import process_conversation_with_mistral
 from .reparator import apply_fix
 
@@ -44,7 +44,7 @@ class DomoLinkMistralConversationEntity(ConversationEntity):
         self.hass = hass
         self._entry = entry
         self._attr_unique_id = f"{entry.entry_id}_conversation"
-        self._history = defaultdict(list)
+        self._history = {}
 
         # Activer le support du contrôle domotique si disponible
         if hasattr(conversation, "ConversationEntityFeature") and hasattr(
@@ -65,7 +65,7 @@ class DomoLinkMistralConversationEntity(ConversationEntity):
             name="DomoLink-Mistral",
             manufacturer="SocrateMobile",
             model="Mistral AI Assist Agent",
-            sw_version="2.6.0",
+            sw_version=VERSION,
         )
 
     def _get_entities_context(self) -> str:
@@ -113,13 +113,16 @@ class DomoLinkMistralConversationEntity(ConversationEntity):
         # Contexte domotique
         entities_context = self._get_entities_context()
 
+        # Récupérer l'historique existant pour cette conversation
+        conv_history = self._history.get(conv_id, [])
+
         # Appel à Mistral
         res = await process_conversation_with_mistral(
             self.hass,
             api_key=api_key,
             model=model,
             user_text=text,
-            history=self._history[conv_id],
+            history=conv_history,
             entities_context=entities_context,
             language=lang,
         )
@@ -133,12 +136,19 @@ class DomoLinkMistralConversationEntity(ConversationEntity):
             await apply_fix(self.hass, service_calls)
 
         # Mémoriser dans l'historique de session
-        self._history[conv_id].append({"role": "user", "content": text})
-        self._history[conv_id].append({"role": "assistant", "content": response_text})
+        conv_history.append({"role": "user", "content": text})
+        conv_history.append({"role": "assistant", "content": response_text})
 
         # Nettoyage de l'historique (max 10 tours)
-        if len(self._history[conv_id]) > 10:
-            self._history[conv_id] = self._history[conv_id][-10:]
+        if len(conv_history) > 10:
+            conv_history = conv_history[-10:]
+
+        self._history[conv_id] = conv_history
+
+        # Bander la mémoire globale à 50 conversations max
+        if len(self._history) > 50:
+            oldest_key = next(iter(self._history))
+            self._history.pop(oldest_key, None)
 
         # Création de la réponse d'intention standard Home Assistant
         intent_response = IntentResponse(language=lang)

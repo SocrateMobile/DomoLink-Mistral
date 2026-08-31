@@ -22,29 +22,27 @@ _LOGGER = logging.getLogger(__name__)
 async def trigger_backup(hass: HomeAssistant) -> bool:
     """Déclenche une sauvegarde de sécurité avant d'appliquer une modification."""
     try:
-        _LOGGER.info("DomoLink-Mistral: Lancement d'une sauvegarde de sécurité...")
-
-        # HA 2023.x+ : service natif backup.create
+        # HA 2023.x+ : service natif backup.create (lancé sans bloquer pour éviter les timeouts)
         if hass.services.has_service("backup", "create"):
-            await hass.services.async_call("backup", "create", {}, blocking=True)
-            _LOGGER.info("DomoLink-Mistral: Sauvegarde créée avec succès.")
+            await hass.services.async_call("backup", "create", {}, blocking=False)
+            _LOGGER.info("DomoLink-Mistral: Sauvegarde système lancée en arrière-plan.")
             return True
 
         # Ancienne méthode via Hass.io / Supervisor
         if hass.services.has_service("hassio", "backup_full"):
-            await hass.services.async_call("hassio", "backup_full", {}, blocking=True)
-            _LOGGER.info("DomoLink-Mistral: Sauvegarde Supervisor créée avec succès.")
+            await hass.services.async_call("hassio", "backup_full", {}, blocking=False)
+            _LOGGER.info("DomoLink-Mistral: Sauvegarde Supervisor lancée en arrière-plan.")
             return True
 
-        _LOGGER.warning(
-            "DomoLink-Mistral: Aucun service de sauvegarde disponible. "
-            "La correction sera appliquée avec backup local .bak."
+        _LOGGER.debug(
+            "DomoLink-Mistral: Aucun service de backup global. "
+            "La correction sera sécurisée par le backup local .bak."
         )
         return True
 
     except Exception as e:
-        _LOGGER.error("Erreur critique lors de la tentative de sauvegarde: %s", e)
-        return False
+        _LOGGER.warning("DomoLink-Mistral: Erreur lors de la sauvegarde globale: %s (backup local .bak actif)", e)
+        return True
 
 
 def _is_service_allowed(domain: str, service: str) -> bool:
@@ -108,7 +106,8 @@ def _apply_yaml_file_fix(hass: HomeAssistant, file_rel_path: str, find_text: str
                 original = f.read()
 
             if find_text and find_text in original:
-                updated = original.replace(find_text, replace_text or "")
+                # Remplacer uniquement la première occurrence ciblée pour éviter d'altérer d'autres blocs
+                updated = original.replace(find_text, replace_text or "", 1)
             else:
                 return {"success": False, "reason": f"Texte cible non trouvé dans {file_rel_path}"}
 
@@ -285,9 +284,12 @@ async def append_automation_to_yaml(hass: HomeAssistant, automation_yaml: str) -
         existing = ""
         if os.path.exists(target_path):
             with open(target_path, "r", encoding="utf-8") as f:
-                existing = f.read().rstrip()
+                existing = f.read().strip()
+                # Si le fichier ne contient que '[]', le vider pour permettre une liste YAML propre
+                if existing == "[]":
+                    existing = ""
 
-        combined = existing + "\n\n" + cleaned + "\n" if existing else cleaned + "\n"
+        combined = (existing + "\n\n" + cleaned + "\n") if existing else (cleaned + "\n")
 
         # 4. Validation syntaxique
         try:

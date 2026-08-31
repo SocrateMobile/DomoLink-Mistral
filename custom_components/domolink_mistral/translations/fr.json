@@ -26,5 +26,18 @@
     "abort": {
       "already_configured": "DomoLink-Mistral est déjà configuré."
     }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Options DomoLink-Mistral",
+        "description": "Ajustez le modèle et le mode d'analyse.",
+        "data": {
+          "model": "Modèle Mistral",
+          "scan_mode": "Mode de scan",
+          "scan_frequency": "Fréquence (fois par jour)"
+        }
+      }
+    }
   }
 }

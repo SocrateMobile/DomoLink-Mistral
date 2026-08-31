@@ -157,6 +157,16 @@ class DomolinkMistralPanel extends HTMLElement {
     return `Il y a ${Math.floor(diff / 86400)} jour(s)`;
   }
 
+  _escapeHtml(str) {
+    if (!str) return "";
+    return String(str)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#039;");
+  }
+
   _render() {
     const root = this.shadowRoot;
     root.innerHTML = `
@@ -578,13 +588,13 @@ class DomolinkMistralPanel extends HTMLElement {
     return `
       <div class="card severity-border" style="border-left-color: ${color};">
         <div class="card-title">
-          <span>${issue.title}</span>
+          <span>${this._escapeHtml(issue.title)}</span>
           <span class="badge badge-category">${categoryLabel}</span>
           <span class="badge" style="background: ${isIgnored ? '#9e9e9e' : color};">
             ${isIgnored ? 'Ignoré' : label}
           </span>
         </div>
-        <p class="card-desc">${issue.description || ""}</p>
+        <p class="card-desc">${this._escapeHtml(issue.description || "")}</p>
         <div class="buttons">${buttons}</div>
       </div>
     `;
@@ -1124,11 +1134,16 @@ class DomolinkMistralPanel extends HTMLElement {
             // Réinitialiser la sélection de la caméra après l'envoi
             if (camSelect) camSelect.value = "";
           } else {
+            // Découvrir l'agent de conversation Mistral disponible dans Home Assistant
+            const availableAgent = Object.keys(this._hass.states).find(
+              id => id.startsWith("conversation.") && (id.includes("mistral") || id.includes("domolink"))
+            ) || "conversation.domolink_mistral_mistral_ai";
+
             // Chat texte normal
             const resp = await this._hass.callWS({
               type: "conversation/process",
               text: text,
-              agent_id: "conversation.domolink_mistral_mistral_ai"
+              agent_id: availableAgent
             });
 
             const speech = resp?.response?.speech?.plain?.speech || "Action effectuée.";
