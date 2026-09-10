@@ -86,7 +86,7 @@ class DomolinkMistralConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         """Étape 2 : Choix du modèle et du mode de scan."""
         if user_input is not None:
             return self.async_create_entry(
-                title="DomoLink-Mistral",
+                title="DomoLink-Mistral IA",
                 data={CONF_API_KEY: self.api_key},
                 options=user_input,
             )

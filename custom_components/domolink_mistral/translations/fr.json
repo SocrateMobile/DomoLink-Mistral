@@ -2,7 +2,7 @@
   "config": {
     "step": {
       "user": {
-        "title": "Configuration de DomoLink-Mistral",
+        "title": "Configuration de DomoLink-Mistral IA",
         "description": "Entrez votre clé API Mistral pour connecter votre assistant IA.",
         "data": {
           "api_key": "Clé API Mistral"
@@ -24,13 +24,13 @@
       "unknown": "Erreur inattendue. Consultez les logs pour plus de détails."
     },
     "abort": {
-      "already_configured": "DomoLink-Mistral est déjà configuré."
+      "already_configured": "DomoLink-Mistral IA est déjà configuré."
     }
   },
   "options": {
     "step": {
       "init": {
-        "title": "Options DomoLink-Mistral",
+        "title": "Options DomoLink-Mistral IA",
         "description": "Ajustez le modèle et le mode d'analyse.",
         "data": {
           "model": "Modèle Mistral",
