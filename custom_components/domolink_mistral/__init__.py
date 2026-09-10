@@ -23,6 +23,7 @@ from homeassistant.helpers.storage import Store
 
 from .const import (
     DOMAIN,
+    VERSION,
     CONF_SCAN_FREQUENCY,
     CONF_SCAN_MODE,
     MODE_BOOT,
