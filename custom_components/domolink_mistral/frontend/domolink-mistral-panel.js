@@ -402,7 +402,7 @@ class DomolinkMistralPanel extends HTMLElement {
         <div style="display: flex; align-items: center; gap: 12px;">
           <img src="/domolink_mistral_frontend/icon.png" alt="Logo" style="width: 38px; height: 38px; border-radius: 8px;" />
           <div>
-            <h1 style="margin: 0; font-size: 1.4em; line-height: 1.2;">DomoLink-Mistral</h1>
+            <h1 style="margin: 0; font-size: 1.4em; line-height: 1.2;">DomoLink-Mistral IA</h1>
             <div class="header-info">Dernière analyse : ${this._timeAgo(this._lastAnalysis)}</div>
           </div>
         </div>
@@ -485,7 +485,7 @@ class DomolinkMistralPanel extends HTMLElement {
         <div class="card">
           <h2 style="margin-top:0;">🛡️ Bilan de Santé du Système</h2>
           <p style="color: var(--secondary-text-color);">
-            DomoLink-Mistral inspecte en continu vos logs, votre configuration YAML récursive, vos périphériques ESPHome, vos Blueprints et l'état de toutes vos entités.
+            DomoLink-Mistral IA inspecte en continu vos logs, votre configuration YAML récursive, vos périphériques ESPHome, vos Blueprints et l'état de toutes vos entités.
           </p>
 
           <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px; margin: 20px 0;">

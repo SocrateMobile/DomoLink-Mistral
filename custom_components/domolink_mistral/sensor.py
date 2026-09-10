@@ -48,7 +48,7 @@ class DomolinkMistralSensor(SensorEntity):
         """Associe ce capteur au device DomoLink-Mistral."""
         return DeviceInfo(
             identifiers={(DOMAIN, self._entry_id)},
-            name="DomoLink-Mistral",
+            name="DomoLink-Mistral IA",
             manufacturer="SocrateMobile",
             model="Mistral AI Log Analyzer",
             sw_version=VERSION,

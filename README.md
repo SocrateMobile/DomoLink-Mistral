@@ -1,9 +1,9 @@
-# 🧠 DomoLink-Mistral pour Home Assistant
+# 🧠 DomoLink-Mistral IA pour Home Assistant
 
 [![HACS Compatible](https://img.shields.io/badge/HACS-Custom-blue.svg)](https://github.com/SocrateMobile/DomoLink-Mistral)
-[![Version](https://img.shields.io/badge/version-2.0.0-green.svg)](https://github.com/SocrateMobile/DomoLink-Mistral/releases)
+[![Version](https://img.shields.io/badge/version-2.9.1-green.svg)](https://github.com/SocrateMobile/DomoLink-Mistral/releases)
 
-DomoLink-Mistral est une intégration puissante pour Home Assistant qui connecte votre maison intelligente à l'intelligence artificielle **Mistral AI**. Elle agit comme un **assistant de diagnostic et d'optimisation** pour votre installation domotique.
+DomoLink-Mistral IA est une intégration puissante pour Home Assistant qui connecte votre maison intelligente à l'intelligence artificielle **Mistral AI**. Elle agit comme un **assistant de diagnostic, d'automatisation et d'optimisation** pour votre installation domotique.
 
 L'intégration analyse intelligemment vos journaux d'erreurs (`system_log` et `homeassistant.log`), détecte les anomalies, et vous propose des solutions précises pas-à-pas pour les résoudre. Elle peut même appliquer certaines corrections automatiquement après avoir sécurisé votre configuration avec une sauvegarde !
 
@@ -20,11 +20,13 @@ L'intégration analyse intelligemment vos journaux d'erreurs (`system_log` et `h
 - **Sauvegarde automatique** avant chaque correction
 
 ### 🎛️ Panneau de résolution interactif
-Un panneau dédié dans la barre latérale de Home Assistant avec 4 actions :
-- **Ignorer** : masque l'erreur avec un tag "Ignoré" (persistant, réversible)
-- **Manuel** : affiche un guide pas-à-pas dans une fenêtre déplaçable en surimpression
-- **Automatique** : sauvegarde + applique le correctif pour une erreur spécifique
-- **All Auto** : sauvegarde + corrige toutes les erreurs d'un seul coup
+Un panneau dédié **DomoLink-Mistral IA** dans la barre latérale de Home Assistant avec 6 onglets :
+- **🛡️ Diagnostic & Audit** : analyse globale de santé
+- **🔧 Réparation Sécurisée** : correctifs manuels, automatiques et All Auto
+- **✨ Générateur IA** : création d'automations intelligentes en langage naturel
+- **🎙️ Assist Vocal & Écrit** : agent conversationnel officiel HA Assist avec pilotage domotique
+- **👁️ Vision & Caméras** : analyse de sécurité et snapshots avec Pixtral
+- **📰 Smart Briefing** : synthèse vocale quotidienne intelligente
 
 ### ⏰ Planification flexible
 - **Live** : analyse périodique (1 à 24 fois par jour)
@@ -37,8 +39,8 @@ Un panneau dédié dans la barre latérale de Home Assistant avec 4 actions :
 1. Ouvrez **HACS** dans Home Assistant
 2. Cliquez sur **Intégrations** > ⋮ > **Dépôts personnalisés**
 3. Ajoutez `https://github.com/SocrateMobile/DomoLink-Mistral` (catégorie : **Intégration**)
-4. Installez **DomoLink-Mistral** et redémarrez Home Assistant
-5. Allez dans *Paramètres > Appareils et services > Ajouter une intégration* > **DomoLink-Mistral**
+4. Installez **DomoLink-Mistral IA** et redémarrez Home Assistant
+5. Allez dans *Paramètres > Appareils et services > Ajouter une intégration* > **DomoLink-Mistral IA**
 6. Entrez votre clé API Mistral (disponible sur [console.mistral.ai](https://console.mistral.ai))
 
 ### Installation manuelle
@@ -48,8 +50,8 @@ Un panneau dédié dans la barre latérale de Home Assistant avec 4 actions :
 
 ## 🛠️ Utilisation
 
-### Panneau Mistral AI
-Après installation, un nouveau menu **"Mistral AI"** (🧠) apparaît dans votre barre latérale. C'est votre tableau de bord de diagnostic.
+### Panneau DomoLink-Mistral IA
+Après installation, un nouveau menu **"DomoLink-Mistral IA"** (🧠) apparaît dans votre barre latérale. C'est votre tableau de bord central.
 
 ### Carte Lovelace (Bouton)
 Ajoutez un bouton sur votre dashboard pour déclencher l'analyse manuellement :

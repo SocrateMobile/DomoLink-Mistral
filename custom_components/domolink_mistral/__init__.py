@@ -80,13 +80,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     async_register_built_in_panel(
         hass,
         component_name="custom",
-        sidebar_title="Mistral AI",
+        sidebar_title="DomoLink-Mistral IA",
         sidebar_icon="mdi:brain",
         frontend_url_path="domolink_mistral",
         config={
             "_panel_custom": {
                 "name": "domolink-mistral-panel",
-                "module_url": "/domolink_mistral_frontend/domolink-mistral-panel.js?v=2.9.1",
+                "module_url": f"/domolink_mistral_frontend/domolink-mistral-panel.js?v={VERSION}",
             }
         },
         require_admin=True,

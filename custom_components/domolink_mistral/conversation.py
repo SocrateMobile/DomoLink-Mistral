@@ -62,7 +62,7 @@ class DomoLinkMistralConversationEntity(ConversationEntity):
         """Associe cet agent à l'appareil DomoLink-Mistral."""
         return DeviceInfo(
             identifiers={(DOMAIN, self._entry.entry_id)},
-            name="DomoLink-Mistral",
+            name="DomoLink-Mistral IA",
             manufacturer="SocrateMobile",
             model="Mistral AI Assist Agent",
             sw_version=VERSION,

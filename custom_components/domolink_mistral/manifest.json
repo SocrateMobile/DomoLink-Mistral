@@ -1,6 +1,6 @@
 {
   "domain": "domolink_mistral",
-  "name": "DomoLink-Mistral",
+  "name": "DomoLink-Mistral IA",
   "codeowners": ["@SocrateMobile"],
   "config_flow": true,
   "dependencies": ["frontend", "conversation"],
