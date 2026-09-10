@@ -1,7 +1,7 @@
 # 🧠 DomoLink-Mistral IA pour Home Assistant
 
 [![HACS Compatible](https://img.shields.io/badge/HACS-Custom-blue.svg)](https://github.com/SocrateMobile/DomoLink-Mistral)
-[![Version](https://img.shields.io/badge/version-2.9.1-green.svg)](https://github.com/SocrateMobile/DomoLink-Mistral/releases)
+[![Version](https://img.shields.io/badge/version-2.9.2-green.svg)](https://github.com/SocrateMobile/DomoLink-Mistral/releases)
 
 DomoLink-Mistral IA est une intégration puissante pour Home Assistant qui connecte votre maison intelligente à l'intelligence artificielle **Mistral AI**. Elle agit comme un **assistant de diagnostic, d'automatisation et d'optimisation** pour votre installation domotique.
 
