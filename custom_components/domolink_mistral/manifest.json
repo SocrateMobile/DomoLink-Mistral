@@ -3,7 +3,7 @@
   "name": "DomoLink-Mistral IA",
   "codeowners": ["@SocrateMobile"],
   "config_flow": true,
-  "dependencies": ["frontend", "conversation"],
+  "dependencies": ["frontend", "conversation", "http"],
   "documentation": "https://github.com/SocrateMobile/DomoLink-Mistral",
   "issue_tracker": "https://github.com/SocrateMobile/DomoLink-Mistral/issues",
   "integration_type": "hub",
