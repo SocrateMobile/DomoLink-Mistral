@@ -78,33 +78,44 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     from homeassistant.components.http import StaticPathConfig
     from homeassistant.components.frontend import async_register_built_in_panel
 
-    await hass.http.async_register_static_paths(
-        [
-            StaticPathConfig(
-                "/domolink_mistral_frontend",
-                hass.config.path("custom_components/domolink_mistral/frontend"),
-                cache_headers=False,
-            )
-        ]
-    )
+    frontend_dir = hass.config.path("custom_components/domolink_mistral/frontend")
+    if hasattr(hass.http, "async_register_static_paths"):
+        await hass.http.async_register_static_paths(
+            [
+                StaticPathConfig(
+                    "/domolink_mistral_frontend",
+                    frontend_dir,
+                    cache_headers=False,
+                )
+            ]
+        )
+    else:
+        hass.http.register_static_path(
+            "/domolink_mistral_frontend",
+            frontend_dir,
+            cache_headers=False,
+        )
 
     def _register_sidebar_panel(has_update: bool = False):
         title = "DomoLink-Mistral IA 🔴" if has_update else "DomoLink-Mistral IA"
         icon = "mdi:shield-alert" if has_update else "mdi:brain"
-        async_register_built_in_panel(
-            hass,
-            component_name="custom",
-            sidebar_title=title,
-            sidebar_icon=icon,
-            frontend_url_path="domolink_mistral",
-            config={
-                "_panel_custom": {
-                    "name": "domolink-mistral-panel",
-                    "module_url": f"/domolink_mistral_frontend/domolink-mistral-panel.js?v={VERSION}",
-                }
-            },
-            require_admin=True,
-        )
+        try:
+            async_register_built_in_panel(
+                hass,
+                component_name="custom",
+                sidebar_title=title,
+                sidebar_icon=icon,
+                frontend_url_path="domolink_mistral",
+                config={
+                    "_panel_custom": {
+                        "name": "domolink-mistral-panel",
+                        "module_url": f"/domolink_mistral_frontend/domolink-mistral-panel.js?v={VERSION}",
+                    }
+                },
+                require_admin=False,
+            )
+        except Exception:
+            pass
 
     _register_sidebar_panel(has_update=False)
 
