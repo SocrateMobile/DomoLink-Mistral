@@ -17,8 +17,8 @@ async def async_setup_entry(
     """Configure la plateforme button."""
     async_add_entities(
         [
-            AnalyzeButton(hass, entry),
-            FixAllButton(hass, entry),
+            AnalyzeButton(entry),
+            FixAllButton(entry),
         ]
     )
 
@@ -28,24 +28,25 @@ class DomolinkMistralBaseButton(ButtonEntity):
 
     _attr_has_entity_name = True
 
-    def __init__(self, hass: HomeAssistant, entry: ConfigEntry):
+    def __init__(self, entry: ConfigEntry):
         """Initialisation."""
-        self.hass = hass
         self._entry_id = entry.entry_id
 
     @property
     def device_info(self) -> DeviceInfo:
-        """Associe ce bouton au device DomoLink-Mistral."""
         return DeviceInfo(
             identifiers={(DOMAIN, self._entry_id)},
+            name="DomoLink-Mistral IA",
+            manufacturer="SocrateMobile",
+            model="Mistral AI Integration",
         )
 
 
 class AnalyzeButton(DomolinkMistralBaseButton):
     """Bouton pour lancer une analyse manuelle."""
 
-    def __init__(self, hass: HomeAssistant, entry: ConfigEntry):
-        super().__init__(hass, entry)
+    def __init__(self, entry: ConfigEntry):
+        super().__init__(entry)
         self._attr_unique_id = f"{entry.entry_id}_analyze_btn"
         self._attr_name = "Analyser les logs"
         self._attr_icon = "mdi:magnify-scan"
@@ -58,8 +59,8 @@ class AnalyzeButton(DomolinkMistralBaseButton):
 class FixAllButton(DomolinkMistralBaseButton):
     """Bouton pour appliquer toutes les corrections (All Auto)."""
 
-    def __init__(self, hass: HomeAssistant, entry: ConfigEntry):
-        super().__init__(hass, entry)
+    def __init__(self, entry: ConfigEntry):
+        super().__init__(entry)
         self._attr_unique_id = f"{entry.entry_id}_fix_all_btn"
         self._attr_name = "Appliquer les correctifs (All Auto)"
         self._attr_icon = "mdi:auto-fix"
