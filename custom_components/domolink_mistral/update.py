@@ -6,22 +6,29 @@ et l'installation en 1 clic.
 """
 from __future__ import annotations
 
+import asyncio
+from datetime import timedelta
 import logging
 from typing import Any
 
+from homeassistant.components import frontend
 from homeassistant.components.update import (
+    UpdateDeviceClass,
     UpdateEntity,
     UpdateEntityFeature,
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.event import async_track_time_interval
 
 from .const import DOMAIN, VERSION
 from .updater import UpdateManager, get_installed_version
 
 _LOGGER = logging.getLogger(__name__)
+UPDATE_CHECK_INTERVAL = timedelta(hours=4)
 
 
 async def async_setup_entry(
@@ -47,6 +54,7 @@ class DomolinkMistralUpdateEntity(UpdateEntity):
     _attr_has_entity_name = True
     _attr_name = "Mise à jour"
     _attr_title = "DomoLink-Mistral IA"
+    _attr_device_class = UpdateDeviceClass.FIRMWARE
     _attr_supported_features = (
         UpdateEntityFeature.INSTALL
         | UpdateEntityFeature.RELEASE_NOTES
@@ -64,6 +72,49 @@ class DomolinkMistralUpdateEntity(UpdateEntity):
         self._attr_latest_version = current_ver
         self._attr_release_url = updater.release_url
         self._attr_release_summary = updater.changelog
+        self._unsub_interval = None
+
+    async def async_added_to_hass(self) -> None:
+        """Enregistre le suivi périodique et effectue une première vérification."""
+        await super().async_added_to_hass()
+        self._unsub_interval = async_track_time_interval(
+            self.hass, self._async_periodic_check, UPDATE_CHECK_INTERVAL
+        )
+        self.hass.async_create_task(self.async_update())
+
+    async def async_will_remove_from_hass(self) -> None:
+        """Nettoyage lors du retrait de l'entité."""
+        if self._unsub_interval:
+            self._unsub_interval()
+            self._unsub_interval = None
+        await super().async_will_remove_from_hass()
+
+    async def _async_periodic_check(self, _now=None) -> None:
+        """Vérification périodique."""
+        await self.async_update()
+
+    def _update_sidebar_panel(self, has_update: bool) -> None:
+        """Met à jour le badge et l'icône dans la barre latérale gauche de HA."""
+        try:
+            title = "DomoLink-Mistral IA 🔴" if has_update else "DomoLink-Mistral IA"
+            icon = "mdi:shield-alert" if has_update else "mdi:brain"
+            frontend.async_register_built_in_panel(
+                self.hass,
+                component_name="custom",
+                sidebar_title=title,
+                sidebar_icon=icon,
+                frontend_url_path="domolink_mistral",
+                config={
+                    "_panel_custom": {
+                        "name": "domolink-mistral-panel",
+                        "module_url": f"/domolink_mistral_frontend/domolink-mistral-panel.js?v={get_installed_version()}",
+                    }
+                },
+                require_admin=False,
+                update=True,
+            )
+        except Exception as err:
+            _LOGGER.debug("Could not update sidebar panel registration: %s", err)
 
     @property
     def device_info(self) -> DeviceInfo:
@@ -109,18 +160,21 @@ class DomolinkMistralUpdateEntity(UpdateEntity):
             await self._updater.async_check()
         return self._updater.changelog
 
-    async def async_install(self, version: str | None = None, backup: bool = False, **kwargs: Any) -> None:
+    async def async_install(self, version: str | None = None, backup: bool = True, **kwargs: Any) -> None:
         """Lance le processus d'installation 1-clic."""
         _LOGGER.info("DomoLink-Mistral IA: Lancement de l'installation depuis l'entité Update...")
         self._attr_in_progress = True
         self.async_write_ha_state()
 
-        result = await self._updater.async_install_update(restart_after=True)
-        if not result.get("success"):
-            _LOGGER.error("DomoLink-Mistral IA: Échec installation: %s", result.get("error"))
-
-        self._attr_in_progress = False
-        self.async_write_ha_state()
+        try:
+            result = await self._updater.async_install_update(restart_after=True, backup=backup)
+            if not result.get("success"):
+                raise HomeAssistantError(result.get("error", "Échec de l'installation"))
+            self._update_sidebar_panel(False)
+            self._attr_installed_version = self._updater.current_version
+        finally:
+            self._attr_in_progress = False
+            self.async_write_ha_state()
 
     async def async_update(self) -> None:
         """Rafraîchit l'état depuis GitHub."""
@@ -129,3 +183,5 @@ class DomolinkMistralUpdateEntity(UpdateEntity):
         self._attr_latest_version = self._updater.latest_version
         self._attr_release_url = self._updater.release_url
         self._attr_release_summary = self._updater.changelog
+        self._update_sidebar_panel(self._updater.has_update)
+        self.async_write_ha_state()
