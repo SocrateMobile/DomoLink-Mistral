@@ -89,8 +89,19 @@ async def _get_system_log(hass: HomeAssistant) -> str:
         if not records:
             return ""
 
+        if isinstance(records, dict) or hasattr(records, "values"):
+            records_list = list(records.values())
+        else:
+            try:
+                records_list = list(records)
+            except Exception:
+                records_list = []
+
+        if not records_list:
+            return ""
+
         entries = []
-        for record in records[-50:]:
+        for record in records_list[-50:]:
             if isinstance(record, dict):
                 level = record.get("level", "UNKNOWN")
                 name = record.get("name", "")

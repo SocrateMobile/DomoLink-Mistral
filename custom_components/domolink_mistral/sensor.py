@@ -42,6 +42,7 @@ class DomolinkMistralSensor(SensorEntity):
         self._ignored_issues: list = []
         self._last_analysis: str | None = None
         self._current_status: str = "En attente"
+        self._last_error: str | None = None
         self._entry_id = entry.entry_id
 
     @property
@@ -68,11 +69,18 @@ class DomolinkMistralSensor(SensorEntity):
             "ignored_issues": self._ignored_issues,
             "last_analysis": self._last_analysis,
             "current_status": self._current_status,
+            "last_error": self._last_error,
         }
 
     def set_status(self, status: str):
         """Met à jour le statut en direct."""
         self._current_status = status
+        self.async_write_ha_state()
+
+    def set_error(self, error_msg: str):
+        """Enregistre et diffuse une erreur d'analyse."""
+        self._current_status = f"❌ {error_msg}"
+        self._last_error = error_msg
         self.async_write_ha_state()
 
     def update_issues(self, issues: list, ignored_ids: list | None = None):
@@ -83,5 +91,6 @@ class DomolinkMistralSensor(SensorEntity):
         self._ignored_issues = [i for i in issues if i.get("id") in ignored_ids]
         self._state = len(self._issues)
         self._last_analysis = datetime.now().isoformat()
+        self._last_error = None
         self._current_status = "Analyse terminée"
         self.async_write_ha_state()

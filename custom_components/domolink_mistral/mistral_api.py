@@ -84,6 +84,40 @@ Voici le rapport complet de l'instance Home Assistant :
 ```"""
 
 
+def _format_mistral_http_error(status: int, message: str = "") -> dict:
+    """Formate une erreur HTTP Mistral avec un diagnostic clair pour l'utilisateur."""
+    if status == 429:
+        return {
+            "type": "rate_limit",
+            "user_msg": "🚫 Limite de requêtes atteinte (HTTP 429 : Too Many Requests). Votre quota Mistral AI est temporairement dépassé ou votre palier de requêtes/minute a été atteint. Vérifiez votre consommation sur console.mistral.ai ou réessayez dans quelques minutes.",
+            "log": f"Erreur HTTP 429 Too Many Requests (Quota ou Rate Limit Mistral dépassé) : {message}",
+        }
+    elif status == 401:
+        return {
+            "type": "auth_error",
+            "user_msg": "🔑 Clé API invalide ou révoquée (HTTP 401 : Unauthorized). Veuillez vérifier votre clé API sur console.mistral.ai et mettre à jour la configuration DomoLink-Mistral.",
+            "log": f"Erreur HTTP 401 Unauthorized (Clé API Mistral invalide) : {message}",
+        }
+    elif status == 403:
+        return {
+            "type": "forbidden",
+            "user_msg": "⛔ Accès refusé (HTTP 403 : Forbidden). Votre compte Mistral n'a pas les autorisations nécessaires ou vos crédits d'utilisation sont épuisés. Rendez-vous sur console.mistral.ai.",
+            "log": f"Erreur HTTP 403 Forbidden : {message}",
+        }
+    elif status >= 500:
+        return {
+            "type": "server_error",
+            "user_msg": f"🌐 Panne ou surcharge temporaire des serveurs Mistral AI (HTTP {status}). Veuillez réessayer dans quelques instants.",
+            "log": f"Erreur serveur Mistral HTTP {status} : {message}",
+        }
+    else:
+        return {
+            "type": "http_error",
+            "user_msg": f"❌ Erreur API Mistral (HTTP {status} : {message})",
+            "log": f"Erreur HTTP {status} : {message}",
+        }
+
+
 async def validate_api_key(hass: HomeAssistant, api_key: str) -> bool:
     """Valide la clé API en appelant l'endpoint /models de Mistral."""
     session = async_get_clientsession(hass)
@@ -130,20 +164,45 @@ async def analyze_with_mistral(
             if "issues" not in result:
                 result = {"issues": []}
 
+            result["success"] = True
             return result
 
     except aiohttp.ClientResponseError as e:
-        _LOGGER.error("Erreur HTTP de Mistral: %s - %s", e.status, e.message)
-        return {"issues": []}
+        err_info = _format_mistral_http_error(e.status, e.message)
+        _LOGGER.error("DomoLink-Mistral: %s", err_info["log"])
+        return {
+            "success": False,
+            "error": err_info["user_msg"],
+            "error_type": err_info["type"],
+            "issues": [],
+        }
     except TimeoutError:
-        _LOGGER.error("Timeout : Mistral n'a pas répondu dans le délai imparti.")
-        return {"issues": []}
-    except json.JSONDecodeError:
-        _LOGGER.error("Mistral n'a pas renvoyé un JSON valide.")
-        return {"issues": []}
+        user_msg = "⏱️ Délai dépassé (Timeout 120s) : Mistral n'a pas répondu. Le rapport est peut-être trop volumineux."
+        _LOGGER.error("DomoLink-Mistral: %s", user_msg)
+        return {
+            "success": False,
+            "error": user_msg,
+            "error_type": "timeout",
+            "issues": [],
+        }
+    except json.JSONDecodeError as e:
+        user_msg = "⚠️ Format de réponse invalide : Mistral n'a pas renvoyé un JSON valide."
+        _LOGGER.error("DomoLink-Mistral: %s (%s)", user_msg, e)
+        return {
+            "success": False,
+            "error": user_msg,
+            "error_type": "json_error",
+            "issues": [],
+        }
     except Exception as e:
-        _LOGGER.error("Erreur inattendue lors de l'appel à Mistral: %s", e)
-        return {"issues": []}
+        user_msg = f"❌ Erreur inattendue lors de l'appel à Mistral : {e}"
+        _LOGGER.error("DomoLink-Mistral: %s", user_msg)
+        return {
+            "success": False,
+            "error": user_msg,
+            "error_type": "unknown",
+            "issues": [],
+        }
 
 
 GENERATE_AUTOMATION_SYSTEM_PROMPT = """Tu es un expert créateur d'automations Home Assistant.
