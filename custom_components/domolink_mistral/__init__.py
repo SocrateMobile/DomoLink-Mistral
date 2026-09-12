@@ -55,13 +55,26 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     def _cleanup_legacy_backups():
         try:
             custom_components_dir = hass.config.path("custom_components")
+            active_dir = os.path.abspath(os.path.dirname(__file__))
             if os.path.exists(custom_components_dir):
                 for item in os.listdir(custom_components_dir):
-                    if item.startswith(f"{DOMAIN}_backup_"):
-                        legacy_path = os.path.join(custom_components_dir, item)
-                        if os.path.isdir(legacy_path):
-                            shutil.rmtree(legacy_path, ignore_errors=True)
-                            _LOGGER.info("DomoLink-Mistral IA: Nettoyage ancien dossier résiduel %s", item)
+                    item_path = os.path.join(custom_components_dir, item)
+                    # Supprimer tout dossier backup résiduel de domolink_mistral
+                    if not os.path.isdir(item_path):
+                        continue
+                    if os.path.abspath(item_path) == active_dir:
+                        continue  # Ne pas supprimer le dossier actif !
+                    # Patterns de noms de backup connus
+                    is_backup = (
+                        item.startswith(f"{DOMAIN}_backup")
+                        or (item.startswith(DOMAIN) and item != DOMAIN)
+                    )
+                    if is_backup:
+                        shutil.rmtree(item_path, ignore_errors=True)
+                        _LOGGER.warning(
+                            "DomoLink-Mistral IA: Suppression du dossier résiduel '%s' "
+                            "(cause potentielle d'erreurs 'hass is None')", item
+                        )
         except Exception as err:
             _LOGGER.debug("DomoLink-Mistral IA: Erreur nettoyage sauvegardes: %s", err)
 
