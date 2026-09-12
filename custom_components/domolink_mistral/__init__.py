@@ -15,6 +15,7 @@ from datetime import timedelta
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EVENT_HOMEASSISTANT_STARTED
 from homeassistant.core import HomeAssistant, SupportsResponse
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.event import (
     async_call_later,
     async_track_time_interval,
@@ -32,6 +33,7 @@ from .const import (
     STORAGE_KEY,
     STORAGE_VERSION,
 )
+from .updater import UpdateManager, get_installed_version
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -77,8 +79,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # ── Enregistrement du panneau frontend (sidebar) ──
     from homeassistant.components.http import StaticPathConfig
     from homeassistant.components.frontend import async_register_built_in_panel
+    import os
 
-    frontend_dir = hass.config.path("custom_components/domolink_mistral/frontend")
+    frontend_dir = os.path.join(os.path.dirname(__file__), "frontend")
     if hasattr(hass.http, "async_register_static_paths"):
         await hass.http.async_register_static_paths(
             [
@@ -109,10 +112,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 config={
                     "_panel_custom": {
                         "name": "domolink-mistral-panel",
-                        "module_url": f"/domolink_mistral_frontend/domolink-mistral-panel.js?v={VERSION}",
+                        "module_url": f"/domolink_mistral_frontend/domolink-mistral-panel.js?v={get_installed_version()}",
                     }
                 },
                 require_admin=False,
+                update=True,
             )
         except Exception:
             pass
@@ -667,14 +671,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         return res
 
     async def handle_perform_update(call):
-        """Service : domolink_mistral.perform_update (Installe la mise à jour GitHub)."""
+        """Service : domolink_mistral.perform_update / install_update (Installe la mise à jour GitHub)."""
         data = hass.data[DOMAIN][entry.entry_id]
         updater_obj = data.get("updater")
         if not updater_obj:
-            return {"success": False, "error": "Gestionnaire de mise à jour indisponible"}
+            raise HomeAssistantError("Gestionnaire de mise à jour indisponible")
 
         restart_after = call.data.get("restart", True)
-        res = await updater_obj.async_install_update(restart_after=restart_after)
+        backup = call.data.get("backup", True)
+        res = await updater_obj.async_install_update(restart_after=restart_after, backup=backup)
         return res
 
     # ── Enregistrement des services ──
@@ -699,7 +704,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         DOMAIN, "check_update", handle_check_update, supports_response=SupportsResponse.OPTIONAL
     )
     hass.services.async_register(
+        DOMAIN, "check_updates", handle_check_update, supports_response=SupportsResponse.OPTIONAL
+    )
+    hass.services.async_register(
         DOMAIN, "perform_update", handle_perform_update, supports_response=SupportsResponse.OPTIONAL
+    )
+    hass.services.async_register(
+        DOMAIN, "install_update", handle_perform_update, supports_response=SupportsResponse.OPTIONAL
     )
 
     # ═══════════════════════════════════════════════════════

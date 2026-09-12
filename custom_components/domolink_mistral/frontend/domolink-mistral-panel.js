@@ -151,9 +151,9 @@ class DomolinkMistralPanel extends HTMLElement {
       if (!this._updateInfo || this._updateInfo.has_update !== hasUpdate) {
         this._updateInfo = {
           has_update: hasUpdate,
-          current_version: attrs.installed_version || "2.9.6",
-          latest_version: attrs.latest_version || attrs.installed_version || "2.9.6",
-          release_tag: `v${attrs.latest_version || "2.9.6"}`,
+          current_version: attrs.installed_version || "2.9.7",
+          latest_version: attrs.latest_version || attrs.installed_version || "2.9.7",
+          release_tag: `v${attrs.latest_version || "2.9.7"}`,
           release_url: attrs.release_url || "https://github.com/SocrateMobile/DomoLink-Mistral/releases",
           changelog: attrs.release_summary || "Notes de version disponibles sur GitHub.",
           is_updating: attrs.in_progress || false
@@ -200,9 +200,17 @@ class DomolinkMistralPanel extends HTMLElement {
         }
       }, 3000);
 
-      await this._hass.callService("domolink_mistral", "perform_update", {
-        restart: true
-      });
+      try {
+        await this._hass.callService("domolink_mistral", "perform_update", {
+          restart: true,
+          backup: true,
+        });
+      } catch (err) {
+        await this._hass.callService("domolink_mistral", "install_update", {
+          restart: true,
+          backup: true,
+        });
+      }
 
       this._updateProgress = 100;
       this._updateStepText = "🔄 [4/4] Redémarrage de Home Assistant...";
