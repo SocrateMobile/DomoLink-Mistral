@@ -91,10 +91,22 @@ class DomolinkMistralPanel extends HTMLElement {
       this._checkUpdate();
     }, 1000);
 
-    // Injection périodique de la pastille dans la barre latérale HA
+    // Injection périodique et observateur de mutations dans la barre latérale HA
     this._sidebarInterval = setInterval(() => {
       this._injectSidebarBadge();
-    }, 3000);
+    }, 2500);
+
+    try {
+      const ha = document.querySelector("home-assistant");
+      const main = ha && ha.shadowRoot && ha.shadowRoot.querySelector("home-assistant-main");
+      const sidebar = main && main.shadowRoot && main.shadowRoot.querySelector("ha-sidebar");
+      if (sidebar && sidebar.shadowRoot && !this._sidebarObserver) {
+        this._sidebarObserver = new MutationObserver(() => {
+          this._injectSidebarBadge();
+        });
+        this._sidebarObserver.observe(sidebar.shadowRoot, { childList: true, subtree: true });
+      }
+    } catch (e) {}
 
     // Écouter les événements bus HA
     if (window && window.addEventListener) {
@@ -251,37 +263,83 @@ class DomolinkMistralPanel extends HTMLElement {
 
   _injectSidebarBadge() {
     try {
-      const hasUpdate = this._updateInfo && this._updateInfo.has_update;
+      const hasUpdate = Boolean(this._updateInfo && this._updateInfo.has_update);
       const ha = document.querySelector("home-assistant");
-      if (!ha || !ha.shadowRoot) return;
-      const main = ha.shadowRoot.querySelector("home-assistant-main");
-      if (!main || !main.shadowRoot) return;
-      const sidebar = main.shadowRoot.querySelector("ha-sidebar");
+      const main = ha && ha.shadowRoot && ha.shadowRoot.querySelector("home-assistant-main");
+      const sidebar = main && main.shadowRoot && main.shadowRoot.querySelector("ha-sidebar");
       if (!sidebar || !sidebar.shadowRoot) return;
 
-      const container = sidebar.shadowRoot.querySelector("paper-listbox, ha-md-list, nav, div.menu");
-      if (!container) return;
+      const integrations = [
+        {
+          key: "domolink_mistral",
+          patterns: ["domolink_mistral", "domolink-mistral"],
+          entityIds: ["update.domolink_mistralia", "update.domolink_mistral", "update.domolink_mistral_mise_a_jour"],
+          hasUpdate: hasUpdate,
+        },
+        {
+          key: "domolink_alarm",
+          patterns: ["domolink_alarm", "domolink-alarm"],
+          entityIds: ["update.domolink_alarm", "update.domolink_alarm_mise_a_jour"],
+          hasUpdate: undefined,
+        },
+        {
+          key: "domolink_backup",
+          patterns: ["domolink_backup", "domolink-backup"],
+          entityIds: ["update.domolink_backup", "update.domolink_backup_mise_a_jour"],
+          hasUpdate: undefined,
+        },
+        {
+          key: "flipr_pool",
+          patterns: ["flipr_pool", "flipr-pool", "flipr-pool-control", "flipr"],
+          entityIds: ["update.flipr_pool_control", "update.flipr_pool", "update.flipr_pool_mise_a_jour"],
+          hasUpdate: undefined,
+        },
+      ];
 
-      const items = container.querySelectorAll("paper-icon-item, ha-md-list-item, a");
-      for (const item of items) {
-        const href = item.getAttribute("href") || (item.dataset && item.dataset.panel);
-        if (href && (href.includes("domolink_mistral") || href.includes("domolink"))) {
-          let badge = item.querySelector(".domolink-sidebar-badge");
-          if (hasUpdate) {
-            if (!badge) {
-              badge = document.createElement("span");
-              badge.className = "domolink-sidebar-badge";
-              badge.style.cssText = "background: linear-gradient(135deg, #ff416c, #ff4b2b); color: white; font-size: 10px; font-weight: bold; padding: 2px 6px; border-radius: 10px; margin-left: auto; margin-right: 8px; box-shadow: 0 0 8px rgba(255, 75, 43, 0.7); animation: domolink-pulse 1.5s infinite;";
-              item.appendChild(badge);
-            }
-            badge.textContent = "MAJ";
-            badge.title = "Nouvelle mise à jour disponible !";
-          } else if (badge) {
-            badge.remove();
-          }
-          break;
+      const container = sidebar.shadowRoot.querySelector("paper-listbox, ha-md-list, nav, div.menu, div.items");
+      const items = (container || sidebar.shadowRoot).querySelectorAll("paper-icon-item, ha-md-list-item, ha-sidebar-item, a");
+
+      integrations.forEach((integ) => {
+        let isUpdateAvail = integ.hasUpdate;
+        if (isUpdateAvail === undefined && this._hass && this._hass.states) {
+          isUpdateAvail = integ.entityIds.some((id) => {
+            const st = this._hass.states[id];
+            return st && (st.state === "on" || (st.attributes && st.attributes.update_available === true));
+          });
         }
-      }
+
+        for (const item of items) {
+          const href = item.getAttribute("href") || (item.dataset && (item.dataset.panel || item.dataset.href)) || "";
+          const id = item.id || "";
+          const ariaLabel = item.getAttribute("aria-label") || "";
+          const text = (item.textContent || "").toLowerCase();
+
+          const isMatch = integ.patterns.some((pat) => {
+            const p = pat.toLowerCase();
+            return href.toLowerCase().includes(p) ||
+                   id.toLowerCase().includes(p) ||
+                   ariaLabel.toLowerCase().includes(p.replace(/_/g, " ")) ||
+                   (p === "flipr" && text.includes("flipr"));
+          });
+
+          if (isMatch) {
+            let badge = item.querySelector(".domolink-sidebar-badge");
+            if (isUpdateAvail) {
+              if (!badge) {
+                badge = document.createElement("span");
+                badge.className = "badge domolink-sidebar-badge";
+                badge.setAttribute("slot", "end");
+                badge.style.cssText = "background: linear-gradient(135deg, #ef4444, #f59e0b); color: white; border-radius: 9999px; padding: 2px 7px; font-size: 10px; font-weight: 800; box-shadow: 0 2px 6px rgba(239,68,68,0.4); margin-left: auto; letter-spacing: 0.5px; z-index: 10; display: inline-block;";
+                badge.textContent = "MAJ";
+                badge.title = "Mise à jour disponible !";
+                item.appendChild(badge);
+              }
+            } else if (badge) {
+              badge.remove();
+            }
+          }
+        }
+      });
     } catch (e) {
       // Ignorer les erreurs de traversée DOM
     }
