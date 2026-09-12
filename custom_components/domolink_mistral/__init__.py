@@ -35,12 +35,17 @@ from .const import (
 
 _LOGGER = logging.getLogger(__name__)
 
-PLATFORMS: list[str] = ["sensor", "button", "conversation"]
+PLATFORMS: list[str] = ["sensor", "button", "conversation", "update"]
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Configure DomoLink-Mistral depuis une entrée de configuration."""
+    from .updater import UpdateManager
+
     hass.data.setdefault(DOMAIN, {})
+
+    # ── Gestionnaire de mise à jour ──
+    updater = UpdateManager(hass, entry.entry_id)
 
     # ── Stockage persistant pour les erreurs ignorées ──
     store = Store(hass, STORAGE_VERSION, STORAGE_KEY)
@@ -52,6 +57,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         "api_key": entry.data.get("api_key"),
         "options": entry.options,
         "sensor": None,  # Sera peuplé par sensor.py
+        "updater": updater,
+        "update_entity": None,
         "store": store,
         "ignored_ids": ignored_ids,
         "last_issues": [],  # Cache des derniers résultats bruts de Mistral
@@ -59,13 +66,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     }
 
     _LOGGER.info(
-        "DomoLink-Mistral initialisé — modèle: %s, mode: %s",
+        "DomoLink-Mistral IA initialisé — version: %s, modèle: %s, mode: %s",
+        VERSION,
         entry.options.get("model"),
         entry.options.get("scan_mode"),
     )
 
     # ── Enregistrement du panneau frontend (sidebar) ──
     from homeassistant.components.http import StaticPathConfig
+    from homeassistant.components.frontend import async_register_built_in_panel
 
     await hass.http.async_register_static_paths(
         [
@@ -77,21 +86,25 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         ]
     )
 
-    from homeassistant.components.frontend import async_register_built_in_panel
-    async_register_built_in_panel(
-        hass,
-        component_name="custom",
-        sidebar_title="DomoLink-Mistral IA",
-        sidebar_icon="mdi:brain",
-        frontend_url_path="domolink_mistral",
-        config={
-            "_panel_custom": {
-                "name": "domolink-mistral-panel",
-                "module_url": f"/domolink_mistral_frontend/domolink-mistral-panel.js?v={VERSION}",
-            }
-        },
-        require_admin=True,
-    )
+    def _register_sidebar_panel(has_update: bool = False):
+        title = "DomoLink-Mistral IA 🔴" if has_update else "DomoLink-Mistral IA"
+        icon = "mdi:shield-alert" if has_update else "mdi:brain"
+        async_register_built_in_panel(
+            hass,
+            component_name="custom",
+            sidebar_title=title,
+            sidebar_icon=icon,
+            frontend_url_path="domolink_mistral",
+            config={
+                "_panel_custom": {
+                    "name": "domolink-mistral-panel",
+                    "module_url": f"/domolink_mistral_frontend/domolink-mistral-panel.js?v={VERSION}",
+                }
+            },
+            require_admin=True,
+        )
+
+    _register_sidebar_panel(has_update=False)
 
     # ── Écouteur de mise à jour des options (rechargement à chaud) ──
     entry.async_on_unload(entry.add_update_listener(async_reload_entry))
@@ -580,6 +593,34 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 sensor.set_status(f"❌ Échec briefing : {err}")
             return {"success": False, "error": err}
 
+    async def handle_check_update(call):
+        """Service : domolink_mistral.check_update (Vérifie les mises à jour GitHub)."""
+        data = hass.data[DOMAIN][entry.entry_id]
+        updater_obj = data.get("updater")
+        if not updater_obj:
+            return {"has_update": False, "error": "Gestionnaire de mise à jour indisponible"}
+
+        res = await updater_obj.async_check()
+        _register_sidebar_panel(has_update=res.get("has_update", False))
+
+        update_ent = data.get("update_entity")
+        if update_ent:
+            update_ent.async_write_ha_state()
+
+        hass.bus.async_fire("domolink_mistral_update_status", res)
+        return res
+
+    async def handle_perform_update(call):
+        """Service : domolink_mistral.perform_update (Installe la mise à jour GitHub)."""
+        data = hass.data[DOMAIN][entry.entry_id]
+        updater_obj = data.get("updater")
+        if not updater_obj:
+            return {"success": False, "error": "Gestionnaire de mise à jour indisponible"}
+
+        restart_after = call.data.get("restart", True)
+        res = await updater_obj.async_install_update(restart_after=restart_after)
+        return res
+
     # ── Enregistrement des services ──
     hass.services.async_register(DOMAIN, "analyze_now", handle_analyze_now)
     hass.services.async_register(DOMAIN, "apply_fix", handle_apply_fix)
@@ -598,6 +639,36 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass.services.async_register(
         DOMAIN, "generate_daily_briefing", handle_generate_daily_briefing, supports_response=SupportsResponse.OPTIONAL
     )
+    hass.services.async_register(
+        DOMAIN, "check_update", handle_check_update, supports_response=SupportsResponse.OPTIONAL
+    )
+    hass.services.async_register(
+        DOMAIN, "perform_update", handle_perform_update, supports_response=SupportsResponse.OPTIONAL
+    )
+
+    # ═══════════════════════════════════════════════════════
+    # VÉRIFICATION AUTOMATIQUE DES MISES À JOUR
+    # ═══════════════════════════════════════════════════════
+
+    async def _check_updates_task(_now=None):
+        try:
+            res = await updater.async_check()
+            if res.get("has_update"):
+                _register_sidebar_panel(has_update=True)
+                hass.bus.async_fire("domolink_mistral_update_available", res)
+                update_ent = hass.data[DOMAIN][entry.entry_id].get("update_entity")
+                if update_ent:
+                    update_ent.async_write_ha_state()
+        except Exception as e:
+            _LOGGER.debug("DomoLink-Mistral IA: Erreur check MAJ automatique: %s", e)
+
+    cancel_init_check = async_call_later(hass, 15, _check_updates_task)
+    cancel_listeners.append(cancel_init_check)
+
+    cancel_periodic_check = async_track_time_interval(
+        hass, _check_updates_task, timedelta(hours=4)
+    )
+    cancel_listeners.append(cancel_periodic_check)
 
     # ═══════════════════════════════════════════════════════
     # PLANIFICATION DES ANALYSES (Live / Boot / Manuel)
@@ -669,6 +740,8 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         "save_automation",
         "analyze_image",
         "generate_daily_briefing",
+        "check_update",
+        "perform_update",
     ]:
         hass.services.async_remove(DOMAIN, service_name)
 

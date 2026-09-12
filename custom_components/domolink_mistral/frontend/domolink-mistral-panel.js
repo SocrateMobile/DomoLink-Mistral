@@ -1,5 +1,5 @@
 /**
- * DomoLink-Mistral — Panneau Frontend Ultime pour Home Assistant
+ * DomoLink-Mistral IA — Panneau Frontend Ultime pour Home Assistant
  *
  * 6 Onglets intégrés :
  * 1. 🛡️ Diagnostic & Audit (Logs, YAML, !includes, ESPHome, Blueprints, Entités)
@@ -8,6 +8,13 @@
  * 4. 🎙️ Assist Vocal & Écrit (Chat interactif avec tool-calling pour piloter la maison)
  * 5. 👁️ Vision & Surveillance (Analyse de caméras via Mistral Pixtral : colis, personnes, anomalies)
  * 6. 📰 Smart Briefing (Synthèse matinale/soirée avec lecture vocale TTS et résumé)
+ *
+ * Système de Mise à Jour Automatique 1-Clic :
+ * - Détection des releases GitHub
+ * - Pastille MAJ dans le menu latéral Home Assistant
+ * - Bouton d'action dans le bandeau supérieur
+ * - Bannière de notification et modale de Changelog
+ * - Déploiement sécurisé avec sauvegarde et redémarrage automatique
  */
 
 class DomolinkMistralPanel extends HTMLElement {
@@ -32,6 +39,15 @@ class DomolinkMistralPanel extends HTMLElement {
     this._initialized = false;
     this._repairFilter = "all"; // "all" | "high" | "medium" | "low"
 
+    // Système de mise à jour
+    this._updateInfo = null;
+    this._showUpdateModal = false;
+    this._isUpdatingComponent = false;
+    this._updateStepText = "";
+    this._updateProgress = 0;
+    this._rebootCountdown = 0;
+    this._sidebarInterval = null;
+
     // Onglet Générateur
     this._genPrompt = "";
     this._generatedAutomation = null;
@@ -41,7 +57,7 @@ class DomolinkMistralPanel extends HTMLElement {
     this._chatMessages = [
       {
         role: "assistant",
-        text: "Bonjour ! Je suis votre assistant DomoLink-Mistral. Que puis-je faire pour vous aujourd'hui ?",
+        text: "Bonjour ! Je suis votre assistant DomoLink-Mistral IA. Que puis-je faire pour vous aujourd'hui ?",
         services: []
       }
     ];
@@ -62,12 +78,185 @@ class DomolinkMistralPanel extends HTMLElement {
     this._isDragging = false;
   }
 
+  connectedCallback() {
+    // Vérification initiale des mises à jour
+    setTimeout(() => {
+      this._checkUpdate();
+    }, 1000);
+
+    // Injection périodique de la pastille dans la barre latérale HA
+    this._sidebarInterval = setInterval(() => {
+      this._injectSidebarBadge();
+    }, 3000);
+
+    // Écouter les événements bus HA
+    if (window && window.addEventListener) {
+      window.addEventListener("domolink_mistral_update_event", (e) => {
+        if (e.detail) {
+          this._updateInfo = e.detail;
+          this._render();
+          this._injectSidebarBadge();
+        }
+      });
+    }
+  }
+
+  disconnectedCallback() {
+    if (this._sidebarInterval) {
+      clearInterval(this._sidebarInterval);
+    }
+  }
+
   set hass(hass) {
     this._hass = hass;
     const changed = this._updateFromSensor();
+    this._checkUpdateFromEntities();
+
     if (!this._initialized || changed) {
       this._initialized = true;
       this._render();
+      this._injectSidebarBadge();
+    }
+  }
+
+  _checkUpdateFromEntities() {
+    if (!this._hass) return;
+    const updateEntityId = Object.keys(this._hass.states).find(
+      (id) => id.startsWith("update.") && id.includes("domolink")
+    );
+    if (updateEntityId && this._hass.states[updateEntityId]) {
+      const stateObj = this._hass.states[updateEntityId];
+      const attrs = stateObj.attributes || {};
+      const hasUpdate = stateObj.state === "on";
+
+      if (!this._updateInfo || this._updateInfo.has_update !== hasUpdate) {
+        this._updateInfo = {
+          has_update: hasUpdate,
+          current_version: attrs.installed_version || "2.9.2",
+          latest_version: attrs.latest_version || attrs.installed_version || "2.9.2",
+          release_tag: `v${attrs.latest_version || "2.9.2"}`,
+          release_url: attrs.release_url || "https://github.com/SocrateMobile/DomoLink-Mistral/releases",
+          changelog: attrs.release_summary || "Notes de version disponibles sur GitHub.",
+          is_updating: attrs.in_progress || false
+        };
+        this._injectSidebarBadge();
+      }
+    }
+  }
+
+  async _checkUpdate() {
+    if (!this._hass) return;
+    try {
+      const res = await this._hass.callService("domolink_mistral", "check_update", {});
+      if (res && res.response) {
+        this._updateInfo = res.response;
+        this._render();
+        this._injectSidebarBadge();
+      }
+    } catch (e) {
+      console.debug("DomoLink-Mistral IA: Check update skipped:", e);
+    }
+  }
+
+  async _startAutoUpdate() {
+    this._isUpdatingComponent = true;
+    this._updateProgress = 15;
+    this._updateStepText = "📦 [1/4] Téléchargement de la release GitHub...";
+    this._render();
+
+    try {
+      setTimeout(() => {
+        if (this._isUpdatingComponent) {
+          this._updateProgress = 45;
+          this._updateStepText = "🛡️ [2/4] Création de la sauvegarde locale du composant...";
+          this._render();
+        }
+      }, 1500);
+
+      setTimeout(() => {
+        if (this._isUpdatingComponent) {
+          this._updateProgress = 75;
+          this._updateStepText = "⚡ [3/4] Déploiement des nouveaux fichiers...";
+          this._render();
+        }
+      }, 3000);
+
+      await this._hass.callService("domolink_mistral", "perform_update", {
+        restart: true
+      });
+
+      this._updateProgress = 100;
+      this._updateStepText = "🔄 [4/4] Redémarrage de Home Assistant...";
+      this._render();
+
+      this._startRebootSequence();
+
+    } catch (e) {
+      this._isUpdatingComponent = false;
+      this._updateStepText = `❌ Échec : ${e.message || e}`;
+      this._render();
+    }
+  }
+
+  _startRebootSequence() {
+    this._rebootCountdown = 30;
+    const interval = setInterval(() => {
+      this._rebootCountdown--;
+      this._render();
+
+      if (this._rebootCountdown <= 20) {
+        fetch("/api/states", { method: "HEAD", cache: "no-store" })
+          .then((r) => {
+            if (r.ok || r.status === 401 || r.status === 200) {
+              clearInterval(interval);
+              window.location.reload();
+            }
+          })
+          .catch(() => {});
+      }
+
+      if (this._rebootCountdown <= 0) {
+        clearInterval(interval);
+        window.location.reload();
+      }
+    }, 1000);
+  }
+
+  _injectSidebarBadge() {
+    try {
+      const hasUpdate = this._updateInfo && this._updateInfo.has_update;
+      const ha = document.querySelector("home-assistant");
+      if (!ha || !ha.shadowRoot) return;
+      const main = ha.shadowRoot.querySelector("home-assistant-main");
+      if (!main || !main.shadowRoot) return;
+      const sidebar = main.shadowRoot.querySelector("ha-sidebar");
+      if (!sidebar || !sidebar.shadowRoot) return;
+
+      const container = sidebar.shadowRoot.querySelector("paper-listbox, ha-md-list, nav, div.menu");
+      if (!container) return;
+
+      const items = container.querySelectorAll("paper-icon-item, ha-md-list-item, a");
+      for (const item of items) {
+        const href = item.getAttribute("href") || (item.dataset && item.dataset.panel);
+        if (href && (href.includes("domolink_mistral") || href.includes("domolink"))) {
+          let badge = item.querySelector(".domolink-sidebar-badge");
+          if (hasUpdate) {
+            if (!badge) {
+              badge = document.createElement("span");
+              badge.className = "domolink-sidebar-badge";
+              badge.style.cssText = "background: linear-gradient(135deg, #ff416c, #ff4b2b); color: white; font-size: 10px; font-weight: bold; padding: 2px 6px; border-radius: 10px; margin-left: auto; margin-right: 8px; box-shadow: 0 0 8px rgba(255, 75, 43, 0.7); animation: domolink-pulse 1.5s infinite;";
+              item.appendChild(badge);
+            }
+            badge.textContent = "MAJ";
+            badge.title = "Nouvelle mise à jour disponible !";
+          } else if (badge) {
+            badge.remove();
+          }
+          break;
+        }
+      }
+    } catch (e) {
+      // Ignorer les erreurs de traversée DOM
     }
   }
 
@@ -188,6 +377,50 @@ class DomolinkMistralPanel extends HTMLElement {
         .header h1 { margin: 0; font-size: 1.5em; }
         .header-info { font-size: 0.85em; color: var(--secondary-text-color, #757575); }
 
+        /* ── Bouton Animation MAJ ── */
+        .btn-update-pulse {
+          background: linear-gradient(135deg, #ff416c, #ff4b2b);
+          color: white;
+          border: none;
+          padding: 10px 18px;
+          border-radius: 8px;
+          font-weight: 700;
+          font-size: 0.9em;
+          cursor: pointer;
+          display: inline-flex;
+          align-items: center;
+          gap: 8px;
+          box-shadow: 0 4px 15px rgba(255, 65, 108, 0.4);
+          animation: btn-pulse 2s infinite;
+          transition: transform 0.2s, box-shadow 0.2s;
+        }
+        .btn-update-pulse:hover {
+          transform: translateY(-2px);
+          box-shadow: 0 6px 20px rgba(255, 65, 108, 0.6);
+        }
+
+        @keyframes btn-pulse {
+          0% { box-shadow: 0 0 0 0 rgba(255, 65, 108, 0.7); }
+          70% { box-shadow: 0 0 0 12px rgba(255, 65, 108, 0); }
+          100% { box-shadow: 0 0 0 0 rgba(255, 65, 108, 0); }
+        }
+
+        /* ── Bannière de Mise à Jour ── */
+        .update-banner {
+          background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
+          color: white;
+          padding: 16px 20px;
+          border-radius: 12px;
+          margin-bottom: 20px;
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          flex-wrap: wrap;
+          gap: 14px;
+          box-shadow: 0 6px 18px rgba(30, 60, 114, 0.25);
+          border-left: 6px solid #ff4b2b;
+        }
+
         /* ── Navigation 6 Onglets ── */
         .tabs-nav {
           display: flex; gap: 6px; margin-bottom: 24px;
@@ -218,165 +451,110 @@ class DomolinkMistralPanel extends HTMLElement {
           color: white; transition: opacity 0.2s;
           display: inline-flex; align-items: center; gap: 6px; justify-content: center;
         }
-        .btn:hover { opacity: 0.88; }
+        .btn:hover { opacity: 0.9; }
         .btn:disabled { opacity: 0.5; cursor: not-allowed; }
         .btn-primary { background: var(--primary-color, #03a9f4); }
         .btn-success { background: #4caf50; }
-        .btn-ignore { background: var(--secondary-text-color, #9e9e9e); }
-        .btn-manual { background: var(--info-color, #2196f3); }
-        .btn-auto { background: var(--warning-color, #ff9800); }
-        .btn-allauto { background: var(--error-color, #f44336); }
-        .btn-small { padding: 6px 12px; font-size: 0.8em; }
+        .btn-warning { background: #ff9800; }
+        .btn-danger { background: #f44336; }
+        .btn-secondary { background: var(--secondary-text-color, #757575); }
+
+        .stats-bar {
+          display: flex; gap: 12px; margin-bottom: 20px; flex-wrap: wrap;
+        }
+        .stat-chip {
+          background: var(--card-background-color, #fff);
+          padding: 8px 16px; border-radius: 20px; font-size: 0.85em;
+          box-shadow: 0 1px 3px rgba(0,0,0,0.1); display: flex; align-items: center; gap: 6px;
+        }
 
         .card {
           background: var(--card-background-color, #fff);
-          border-radius: 12px; padding: 20px;
+          border-radius: 12px;
+          padding: 20px;
           box-shadow: 0 2px 8px rgba(0,0,0,0.08);
-          margin-bottom: 16px; transition: box-shadow 0.2s;
+          margin-bottom: 16px;
         }
-        .card:hover { box-shadow: 0 4px 16px rgba(0,0,0,0.12); }
 
-        .severity-border { border-left: 5px solid; padding-left: 16px; }
+        .issue-card {
+          background: var(--card-background-color, #fff);
+          border-radius: 10px;
+          padding: 16px;
+          margin-bottom: 12px;
+          box-shadow: 0 2px 6px rgba(0,0,0,0.06);
+          border-left: 5px solid #9e9e9e;
+          transition: transform 0.15s;
+        }
+        .issue-card:hover { transform: translateY(-2px); }
 
         .badge {
-          display: inline-block; padding: 2px 10px; border-radius: 12px;
-          font-size: 0.75em; font-weight: 700; color: white;
-        }
-        .badge-category {
-          background: rgba(150, 150, 150, 0.18);
-          color: var(--primary-text-color, #333);
-          border: 1px solid rgba(150, 150, 150, 0.25);
+          display: inline-block; padding: 3px 8px; border-radius: 4px;
+          font-size: 0.75em; font-weight: bold; color: white;
         }
 
-        .stats-bar {
-          display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 20px;
+        .code-block {
+          background: #1e1e1e; color: #d4d4d4; padding: 12px;
+          border-radius: 8px; font-family: monospace; font-size: 0.85em;
+          white-space: pre-wrap; overflow-x: auto; margin: 10px 0;
         }
-        .stat-chip {
-          padding: 8px 14px; border-radius: 8px; font-weight: 600; font-size: 0.85em;
+
+        /* ── Modales ── */
+        .modal-overlay {
+          position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
+          background: rgba(0,0,0,0.5); z-index: 9999;
+          display: flex; align-items: center; justify-content: center;
+        }
+        .modal {
           background: var(--card-background-color, #fff);
-          box-shadow: 0 1px 4px rgba(0,0,0,0.08);
-          display: flex; align-items: center; gap: 6px;
+          border-radius: 12px; padding: 24px;
+          max-width: 650px; width: 90%; max-height: 85vh;
+          overflow-y: auto; box-shadow: 0 8px 32px rgba(0,0,0,0.25);
         }
 
-        .card-title { margin: 0 0 8px 0; font-size: 1.1em; display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
-        .card-desc { margin: 0 0 16px 0; line-height: 1.5; color: var(--secondary-text-color, #616161); }
-        .buttons { display: flex; gap: 8px; flex-wrap: wrap; }
-
-        .spinner {
-          display: inline-block; width: 18px; height: 18px;
-          border: 3px solid rgba(255,255,255,0.3);
-          border-top: 3px solid white;
-          border-radius: 50%;
-          animation: spin 0.8s linear infinite;
+        .modal-floating {
+          position: fixed;
+          width: 480px;
+          max-width: 90vw;
+          max-height: 80vh;
+          background: var(--card-background-color, #ffffff);
+          border-radius: 12px;
+          box-shadow: 0 8px 32px rgba(0,0,0,0.25);
+          z-index: 10000;
+          display: flex;
+          flex-direction: column;
+          border: 1px solid var(--divider-color, #e0e0e0);
+          overflow: hidden;
         }
-        @keyframes spin { to { transform: rotate(360deg); } }
 
-        .big-spinner {
-          width: 48px; height: 48px; margin: 0 auto 20px;
-          border: 4px solid var(--divider-color, #e0e0e0);
-          border-top: 4px solid var(--primary-color, #03a9f4);
-          border-radius: 50%;
-          animation: spin 1s linear infinite;
+        /* Barre de progression */
+        .progress-bar-bg {
+          background: #e0e0e0;
+          border-radius: 8px;
+          height: 12px;
+          overflow: hidden;
+          margin: 16px 0;
+        }
+        .progress-bar-fill {
+          background: linear-gradient(90deg, #4caf50, #8bc34a);
+          height: 100%;
+          transition: width 0.4s ease;
         }
 
         .loading-overlay {
-          text-align: center; padding: 60px 20px;
-          color: var(--secondary-text-color);
+          display: flex; flex-direction: column; align-items: center; justify-content: center;
+          padding: 60px 20px; text-align: center;
         }
-
-        .empty-state {
-          text-align: center; padding: 50px 20px; font-size: 1.15em;
-          color: var(--secondary-text-color);
+        .spinner {
+          display: inline-block; width: 16px; height: 16px;
+          border: 2px solid rgba(255,255,255,0.3); border-top-color: #fff;
+          border-radius: 50%; animation: spin 0.8s linear infinite;
         }
-
-        /* ── Visual Diff ── */
-        .diff-container {
-          background: #1e1e1e; color: #d4d4d4;
-          border-radius: 8px; padding: 14px; margin: 12px 0;
-          font-family: monospace; font-size: 0.85em; overflow-x: auto;
+        .big-spinner {
+          width: 48px; height: 48px; border: 4px solid var(--divider-color, #e0e0e0);
+          border-top-color: var(--primary-color, #03a9f4); border-radius: 50%;
+          animation: spin 0.8s linear infinite; margin-bottom: 20px;
         }
-        .diff-file-label { color: #03a9f4; font-weight: 700; margin-bottom: 8px; }
-        .diff-line-remove {
-          background: rgba(244, 67, 54, 0.2); color: #ef5350;
-          padding: 4px 8px; border-left: 3px solid #f44336; margin-bottom: 4px;
-          white-space: pre-wrap; word-break: break-all;
-        }
-        .diff-line-add {
-          background: rgba(76, 175, 80, 0.2); color: #81c784;
-          padding: 4px 8px; border-left: 3px solid #4caf50;
-          white-space: pre-wrap; word-break: break-all;
-        }
-        .service-call-box {
-          background: rgba(3, 169, 244, 0.1); border-left: 3px solid #03a9f4;
-          padding: 8px 12px; margin: 8px 0; font-family: monospace; font-size: 0.85em;
-        }
-
-        /* ── Modals & Dialogs ── */
-        .confirm-overlay {
-          position: fixed; top: 0; left: 0; right: 0; bottom: 0;
-          background: rgba(0,0,0,0.65); z-index: 300;
-          display: flex; align-items: center; justify-content: center;
-        }
-        .confirm-box {
-          background: var(--card-background-color, #fff); padding: 24px;
-          border-radius: 12px; max-width: 550px; width: 92%;
-          max-height: 85vh; overflow-y: auto; box-shadow: 0 12px 40px rgba(0,0,0,0.4);
-        }
-        .confirm-box h3 { margin: 0 0 12px 0; color: var(--primary-text-color); }
-        .confirm-box p { margin: 0 0 16px 0; color: var(--secondary-text-color); line-height: 1.5; }
-        .confirm-buttons { display: flex; gap: 12px; justify-content: flex-end; margin-top: 20px; }
-
-        .modal {
-          position: fixed; width: 450px; max-height: 80vh;
-          background: var(--card-background-color, #fff);
-          border: 2px solid var(--primary-color, #03a9f4);
-          border-radius: 12px; z-index: 100; box-shadow: 0 8px 32px rgba(0,0,0,0.25);
-          color: var(--primary-text-color); display: flex; flex-direction: column; overflow: hidden;
-        }
-        .modal-header {
-          padding: 12px 16px; cursor: grab; background: var(--primary-color, #03a9f4); color: white;
-          font-weight: 700; display: flex; justify-content: space-between; align-items: center;
-        }
-        .modal-body { padding: 16px; overflow-y: auto; flex: 1; line-height: 1.6; white-space: pre-wrap; font-size: 0.9em; }
-        .modal-close { background: none; border: none; color: white; font-size: 1.4em; cursor: pointer; }
-
-        /* ── Chat Assist UI ── */
-        .chat-container { display: flex; flex-direction: column; height: 500px; }
-        .chat-messages { flex: 1; overflow-y: auto; padding: 12px; display: flex; flex-direction: column; gap: 12px; }
-        .chat-bubble {
-          max-width: 80%; padding: 12px 16px; border-radius: 14px; line-height: 1.5; font-size: 0.95em;
-        }
-        .chat-user {
-          align-self: flex-end; background: var(--primary-color, #03a9f4); color: white; border-bottom-right-radius: 2px;
-        }
-        .chat-bot {
-          align-self: flex-start; background: rgba(0,0,0,0.06); color: var(--primary-text-color); border-bottom-left-radius: 2px;
-        }
-        .chat-input-bar { display: flex; gap: 8px; margin-top: 12px; }
-        .chat-input {
-          flex: 1; padding: 12px 16px; border-radius: 8px; border: 1px solid var(--divider-color, #ccc);
-          background: var(--card-background-color, #fff); color: var(--primary-text-color);
-        }
-
-        /* ── Form Inputs ── */
-        .input-field {
-          width: 100%; padding: 12px; border-radius: 8px; border: 1px solid var(--divider-color, #ccc);
-          background: var(--card-background-color, #fff); color: var(--primary-text-color);
-          box-sizing: border-box; margin-bottom: 12px; font-family: inherit;
-        }
-        .chips-container { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 16px; }
-        .chip {
-          background: rgba(3, 169, 244, 0.1); color: var(--primary-color, #03a9f4);
-          border: 1px solid rgba(3, 169, 244, 0.3); border-radius: 16px;
-          padding: 6px 12px; font-size: 0.8em; font-weight: 600; cursor: pointer;
-        }
-        .chip:hover { background: var(--primary-color, #03a9f4); color: white; }
-
-        .yaml-code-block {
-          background: #1e1e1e; color: #d4d4d4; padding: 16px; border-radius: 8px;
-          font-family: monospace; font-size: 0.9em; line-height: 1.5; overflow-x: auto; white-space: pre;
-          margin: 16px 0; border: 1px solid #333;
-        }
+        @keyframes spin { to { transform: rotate(360deg); } }
 
         @media (max-width: 700px) {
           :host { padding: 12px; }
@@ -385,18 +563,21 @@ class DomolinkMistralPanel extends HTMLElement {
       </style>
 
       ${this._renderHeader()}
+      ${this._renderUpdateBanner()}
       ${this._renderTabs()}
 
       ${this._renderActiveTabContent()}
 
       ${this._renderModal()}
       ${this._renderConfirmDialog()}
+      ${this._renderUpdateModal()}
     `;
 
     this._attachEvents();
   }
 
   _renderHeader() {
+    const hasUpdate = this._updateInfo && this._updateInfo.has_update;
     return `
       <div class="header">
         <div style="display: flex; align-items: center; gap: 12px;">
@@ -406,9 +587,43 @@ class DomolinkMistralPanel extends HTMLElement {
             <div class="header-info">Dernière analyse : ${this._timeAgo(this._lastAnalysis)}</div>
           </div>
         </div>
-        <button class="btn btn-primary" id="btn-quick-scan" ${this._isAnalyzing ? "disabled" : ""}>
-          ${this._isAnalyzing ? '<span class="spinner"></span>Audit en cours...' : '🔍 Lancer l\'Audit'}
-        </button>
+        <div style="display: flex; align-items: center; gap: 10px;">
+          ${hasUpdate ? `
+            <button class="btn-update-pulse" id="btn-header-update">
+              🚀 Mise à jour ${this._updateInfo.release_tag}
+            </button>
+          ` : ""}
+          <button class="btn btn-primary" id="btn-quick-scan" ${this._isAnalyzing ? "disabled" : ""}>
+            ${this._isAnalyzing ? '<span class="spinner"></span>Audit en cours...' : '🔍 Lancer l'Audit'}
+          </button>
+        </div>
+      </div>
+    `;
+  }
+
+  _renderUpdateBanner() {
+    if (!this._updateInfo || !this._updateInfo.has_update) return "";
+    return `
+      <div class="update-banner">
+        <div style="display: flex; align-items: center; gap: 14px;">
+          <span style="font-size: 2em;">🚀</span>
+          <div>
+            <div style="font-weight: 700; font-size: 1.1em; color: #ffeb3b;">
+              Nouvelle version disponible : ${this._updateInfo.release_tag}
+            </div>
+            <div style="font-size: 0.85em; opacity: 0.95;">
+              Version actuelle : v${this._updateInfo.current_version} &bull; Sauvegarde préalable automatique et déploiement 1-clic.
+            </div>
+          </div>
+        </div>
+        <div style="display: flex; gap: 8px;">
+          <button class="btn btn-secondary" id="btn-banner-changelog" style="background: rgba(255,255,255,0.2);">
+            📋 Changelog
+          </button>
+          <button class="btn btn-warning" id="btn-banner-update" style="background: #ff4b2b; color: white; font-weight: bold;">
+            ⚡ Mettre à jour en 1-Clic
+          </button>
+        </div>
       </div>
     `;
   }
@@ -465,9 +680,6 @@ class DomolinkMistralPanel extends HTMLElement {
     `;
   }
 
-  /* ═══════════════════════════════════════════════════════
-     ONGLET 1 : DIAGNOSTIC & AUDIT
-     ═══════════════════════════════════════════════════════ */
   _renderAuditTab() {
     const highCount = this._issues.filter(i => i.severity === "high").length;
     const medCount = this._issues.filter(i => i.severity === "medium").length;
@@ -489,506 +701,503 @@ class DomolinkMistralPanel extends HTMLElement {
           </p>
 
           <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px; margin: 20px 0;">
-            <div style="background: rgba(0,0,0,0.03); padding: 14px; border-radius: 8px; border-left: 4px solid #03a9f4;">
-              <strong>📜 Logs & Erreurs</strong><br>
-              <span style="font-size: 0.85em; color: var(--secondary-text-color);">homeassistant.log & system_log structuré</span>
+            <div style="background: rgba(3,169,244,0.06); padding: 14px; border-radius: 10px; border: 1px solid rgba(3,169,244,0.15);">
+              <div style="font-size: 1.3em;">📜 <strong>Journaux & Erreurs</strong></div>
+              <p style="font-size: 0.85em; color: var(--secondary-text-color); margin: 6px 0 0 0;">
+                Analyse sémantique des stacktraces et warnings Home Assistant.
+              </p>
             </div>
-            <div style="background: rgba(0,0,0,0.03); padding: 14px; border-radius: 8px; border-left: 4px solid #4caf50;">
-              <strong>📑 Syntaxe & Includes YAML</strong><br>
-              <span style="font-size: 0.85em; color: var(--secondary-text-color);">configuration.yaml, automations, scripts</span>
+            <div style="background: rgba(76,175,80,0.06); padding: 14px; border-radius: 10px; border: 1px solid rgba(76,175,80,0.15);">
+              <div style="font-size: 1.3em;">📑 <strong>YAML & Includes</strong></div>
+              <p style="font-size: 0.85em; color: var(--secondary-text-color); margin: 6px 0 0 0;">
+                Inspection récursive de configuration.yaml, scripts, scenes et packages.
+              </p>
             </div>
-            <div style="background: rgba(0,0,0,0.03); padding: 14px; border-radius: 8px; border-left: 4px solid #ff9800;">
-              <strong>⚡ ESPHome Builder</strong><br>
-              <span style="font-size: 0.85em; color: var(--secondary-text-color);">Fichiers esphome/*.yaml & composants dépréciés</span>
-            </div>
-            <div style="background: rgba(0,0,0,0.03); padding: 14px; border-radius: 8px; border-left: 4px solid #9c27b0;">
-              <strong>🏷️ Intégrité des Entités</strong><br>
-              <span style="font-size: 0.85em; color: var(--secondary-text-color);">Entités orphelines & intégrations en panne</span>
+            <div style="background: rgba(255,152,0,0.06); padding: 14px; border-radius: 10px; border: 1px solid rgba(255,152,0,0.15);">
+              <div style="font-size: 1.3em;">⚡ <strong>ESPHome & Blueprints</strong></div>
+              <p style="font-size: 0.85em; color: var(--secondary-text-color); margin: 6px 0 0 0;">
+                Contrôle des devices hors-ligne et schémas d'automations communautaires.
+              </p>
             </div>
           </div>
 
-          <div style="display: flex; gap: 12px; justify-content: flex-end; flex-wrap: wrap;">
-            <button class="btn btn-primary" id="btn-run-full-audit">🔍 Lancer un Audit Complet</button>
-            ${this._issues.length > 0 ? `<button class="btn btn-auto" id="btn-goto-repair">🔧 Voir les ${this._issues.length} réparations</button>` : ''}
+          <div style="display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-top: 20px;">
+            <button class="btn btn-primary" id="btn-tab-audit-scan">
+              🔍 Lancer un Audit Complet
+            </button>
+            <button class="btn btn-secondary" id="btn-tab-repair-goto">
+              🔧 Accéder aux ${this._issues.length} Réparation(s)
+            </button>
+            <button class="btn btn-secondary" id="btn-check-update-manual" style="margin-left: auto;">
+              🔄 Vérifier les Mises à Jour
+            </button>
           </div>
         </div>
       </div>
     `;
   }
 
-  /* ═══════════════════════════════════════════════════════
-     ONGLET 2 : RÉPARATION SÉCURISÉE
-     ═══════════════════════════════════════════════════════ */
   _renderRepairTab() {
     let filtered = this._issues;
     if (this._repairFilter !== "all") {
-      filtered = this._issues.filter(i => i.severity === this._repairFilter);
+      filtered = filtered.filter(i => i.severity === this._repairFilter);
     }
 
-    let cardsHtml = "";
-    if (filtered.length === 0) {
-      cardsHtml = `<div class="empty-state">✅ Aucune anomalie dans cette catégorie !</div>`;
-    } else {
-      for (const issue of filtered) {
-        cardsHtml += this._renderIssueCard(issue, false);
-      }
-    }
-
-    const hasFixable = this._issues.some(i => i.auto_fix_script && i.auto_fix_script.length > 0);
+    const autoFixCount = this._issues.filter(i => i.auto_fix_script && i.auto_fix_script.length > 0).length;
 
     return `
       <div>
         <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; margin-bottom: 16px;">
-          <div style="display: flex; gap: 6px;">
-            <button class="btn btn-small ${this._repairFilter === 'all' ? 'btn-primary' : 'btn-ignore'}" data-filter="all">Tous (${this._issues.length})</button>
-            <button class="btn btn-small ${this._repairFilter === 'high' ? 'btn-primary' : 'btn-ignore'}" data-filter="high">🔴 Critiques</button>
-            <button class="btn btn-small ${this._repairFilter === 'medium' ? 'btn-primary' : 'btn-ignore'}" data-filter="medium">🟠 Moyens</button>
-            <button class="btn btn-small ${this._repairFilter === 'low' ? 'btn-primary' : 'btn-ignore'}" data-filter="low">🟢 Faibles</button>
-          </div>
-          ${hasFixable ? `
-            <button class="btn btn-allauto" id="btn-allauto">
-              ⚡ All Auto — Sauvegarder & Tout Corriger
+          <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+            <button class="btn ${this._repairFilter === "all" ? "btn-primary" : "btn-secondary"}" id="btn-filter-all">
+              Toutes (${this._issues.length})
             </button>
-          ` : ''}
-        </div>
-
-        ${cardsHtml}
-
-        ${this._ignoredIssues.length > 0 ? `
-          <div class="section-toggle" id="toggle-ignored">
-            ${this._showIgnored ? "▼" : "▶"} Anomalies ignorées (${this._ignoredIssues.length})
-          </div>
-          ${this._showIgnored ? `
-            <div style="opacity: 0.65; margin-top: 12px;">
-              ${this._ignoredIssues.map(i => this._renderIssueCard(i, true)).join("")}
-            </div>
-          ` : ''}
-        ` : ''}
-      </div>
-    `;
-  }
-
-  _renderIssueCard(issue, isIgnored) {
-    const color = this._severityColor(issue.severity);
-    const label = this._severityLabel(issue.severity);
-    const categoryLabel = this._categoryIcon(issue.category);
-    const hasAutoFix = issue.auto_fix_script && issue.auto_fix_script.length > 0;
-
-    let buttons = "";
-    if (isIgnored) {
-      buttons = `<button class="btn btn-primary btn-small" data-action="unignore" data-id="${issue.id}">Réactiver</button>`;
-    } else {
-      buttons = `
-        <button class="btn btn-ignore btn-small" data-action="ignore" data-id="${issue.id}">Ignorer</button>
-        <button class="btn btn-manual btn-small" data-action="manual" data-id="${issue.id}">📖 Manuel</button>
-        <button class="btn btn-auto btn-small" data-action="auto" data-id="${issue.id}">🔧 Automatique</button>
-      `;
-    }
-
-    return `
-      <div class="card severity-border" style="border-left-color: ${color};">
-        <div class="card-title">
-          <span>${this._escapeHtml(issue.title)}</span>
-          <span class="badge badge-category">${categoryLabel}</span>
-          <span class="badge" style="background: ${isIgnored ? '#9e9e9e' : color};">
-            ${isIgnored ? 'Ignoré' : label}
-          </span>
-        </div>
-        <p class="card-desc">${this._escapeHtml(issue.description || "")}</p>
-        <div class="buttons">${buttons}</div>
-      </div>
-    `;
-  }
-
-  /* ═══════════════════════════════════════════════════════
-     ONGLET 3 : GÉNÉRATEUR IA
-     ═══════════════════════════════════════════════════════ */
-  _renderGeneratorTab() {
-    let resultHtml = "";
-    if (this._generatedAutomation) {
-      const auto = this._generatedAutomation;
-      resultHtml = `
-        <div class="card" style="border: 2px solid var(--primary-color, #03a9f4); margin-top: 24px;">
-          <h2 style="margin-top: 0; color: var(--primary-color, #03a9f4);">🎉 ${auto.title || "Automation générée"}</h2>
-          <p style="color: var(--secondary-text-color);">${auto.description || ""}</p>
-          
-          ${auto.explanation ? `
-            <div style="background: rgba(3,169,244,0.08); padding: 12px 16px; border-radius: 8px; margin: 14px 0; font-size: 0.92em; line-height: 1.5;">
-              <strong>💡 Explication :</strong><br>${auto.explanation}
-            </div>
-          ` : ''}
-
-          <div class="yaml-code-block">${auto.yaml || ""}</div>
-
-          <div style="display: flex; gap: 12px; flex-wrap: wrap; justify-content: flex-end;">
-            <button class="btn btn-ignore" id="btn-copy-yaml">📋 Copier le YAML</button>
-            <button class="btn btn-success" id="btn-save-automation">💾 Injecter et activer dans automations.yaml</button>
-          </div>
-        </div>
-      `;
-    }
-
-    return `
-      <div style="max-width: 800px; margin: 0 auto;">
-        <div class="card">
-          <h2 style="margin-top: 0;">✨ Créer une automation avec l'IA</h2>
-          <p style="color: var(--secondary-text-color); margin-bottom: 16px;">
-            Décrivez en français ce que vous souhaitez automatiser. Mistral utilise vos vraies entités Home Assistant pour générer un code parfait.
-          </p>
-
-          <div class="chips-container">
-            <span class="chip" data-prompt="Éteindre toutes les lumières à 23h et fermer les volets">🌙 Extinction 23h</span>
-            <span class="chip" data-prompt="Alerte notification si la porte du garage reste ouverte plus de 10 minutes">🚪 Alerte garage</span>
-            <span class="chip" data-prompt="Allumer la lumière de l'allée sur détection de mouvement la nuit pendant 3 minutes">🚶 Détection mouvement nuit</span>
-            <span class="chip" data-prompt="Fermer les volets si la température extérieure dépasse 26°C">☀️ Canicule volets fermés</span>
+            <button class="btn ${this._repairFilter === "high" ? "btn-danger" : "btn-secondary"}" id="btn-filter-high">
+              🔴 Critiques
+            </button>
+            <button class="btn ${this._repairFilter === "medium" ? "btn-warning" : "btn-secondary"}" id="btn-filter-med">
+              🟠 Moyennes
+            </button>
+            <button class="btn ${this._repairFilter === "low" ? "btn-success" : "btn-secondary"}" id="btn-filter-low">
+              🟢 Faibles
+            </button>
           </div>
 
-          <textarea class="input-field" id="gen-prompt-input" rows="4" placeholder="Exemple : Si quelqu'un sonne à la porte et qu'il fait nuit, allumer la lumière du porche pendant 2 min...">${this._genPrompt}</textarea>
-
-          <div style="display: flex; justify-content: flex-end;">
-            <button class="btn btn-primary" id="btn-do-generate" ${this._isGenerating ? "disabled" : ""}>
-              ${this._isGenerating ? '<span class="spinner"></span>Génération par Mistral...' : '✨ Générer l\'automation'}
+          <div style="display: flex; gap: 8px;">
+            <button class="btn btn-warning" id="btn-repair-all" ${autoFixCount === 0 || this._isApplying ? "disabled" : ""}>
+              ⚡ Corriger Tout (All Auto: ${autoFixCount})
+            </button>
+            <button class="btn btn-secondary" id="btn-toggle-ignored">
+              ${this._showIgnored ? "Masquer les ignorés" : `Afficher les ignorés (${this._ignoredIssues.length})`}
             </button>
           </div>
         </div>
 
-        ${resultHtml}
-      </div>
-    `;
-  }
-
-  /* ═══════════════════════════════════════════════════════
-     ONGLET 4 : ASSIST VOCAL & ÉCRIT
-     ═══════════════════════════════════════════════════════ */
-  _renderAssistTab() {
-    const msgHtml = this._chatMessages.map(m => `
-      <div class="chat-bubble ${m.role === 'user' ? 'chat-user' : 'chat-bot'}">
-        ${m.text}
-        ${m.services && m.services.length > 0 ? `
-          <div style="font-size:0.8em; margin-top:6px; opacity:0.85; border-top:1px solid rgba(255,255,255,0.2); padding-top:4px;">
-            ⚡ Actions exécutées : ${m.services.map(s => `${s.domain}.${s.service}`).join(", ")}
+        ${filtered.length === 0 ? `
+          <div class="card" style="text-align: center; padding: 40px 20px;">
+            <div style="font-size: 3em; margin-bottom: 10px;">🎉</div>
+            <h3>Aucune anomalie détectée dans cette catégorie !</h3>
+            <p style="color: var(--secondary-text-color);">Votre installation Home Assistant est saine et optimisée.</p>
           </div>
-        ` : ''}
-      </div>
-    `).join("");
+        ` : filtered.map(issue => this._renderIssueCard(issue)).join("")}
 
-    return `
-      <div style="max-width: 800px; margin: 0 auto;">
-        <div class="card chat-container">
-          <div class="chat-messages" id="chat-box">
-            ${msgHtml}
-          </div>
-
-          <div class="chips-container" style="margin: 8px 0;">
-            <span class="chip" data-chat="Éteins toutes les lumières">💡 Éteins les lumières</span>
-            <span class="chip" data-chat="Quelle est la température de la maison ?">🌡️ Température</span>
-            <span class="chip" data-chat="Est-ce que des portes sont ouvertes ?">🚪 Portes ouvertes ?</span>
-          </div>
-
-          <div class="chat-input-bar">
-            <select class="input-field" id="chat-camera-select" style="width: auto; margin-bottom: 0; padding: 12px; border-radius: 8px 0 0 8px; border-right: none;">
-              <option value="">📸 Joindre une caméra...</option>
-              ${Object.keys(this._hass.states).filter(id => id.startsWith("camera.")).map(id => `
-                <option value="${id}">${this._hass.states[id].attributes.friendly_name || id}</option>
-              `).join("")}
-            </select>
-            <input type="text" class="chat-input" id="chat-input-text" style="border-radius: 0; border-left: 1px solid var(--divider-color, #ccc);" placeholder="Parlez ou écrivez à Mistral AI..." value="${this._chatInput}">
-            <button class="btn btn-primary" id="btn-chat-send" style="border-radius: 0 8px 8px 0;" ${this._isAssisting ? "disabled" : ""}>
-              ${this._isAssisting ? '<span class="spinner"></span>' : 'Envoyer 📤'}
-            </button>
-          </div>
-        </div>
-      </div>
-    `;
-  }
-
-  /* ═══════════════════════════════════════════════════════
-     ONGLET 5 : VISION & CAMÉRAS
-     ═══════════════════════════════════════════════════════ */
-  _renderVisionTab() {
-    // Lister les caméras disponibles dans HA
-    const cameraEntities = Object.keys(this._hass.states).filter(id => id.startsWith("camera."));
-
-    let resultHtml = "";
-    if (this._visionResult) {
-      const v = this._visionResult;
-      resultHtml = `
-        <div class="card" style="border-left: 5px solid ${v.anomalies_detected || v.security_alert ? '#f44336' : '#4caf50'}; margin-top: 20px;">
-          <h3 style="margin-top:0;">
-            ${v.security_alert ? '🚨 Alerte Visuelle !' : '👁️ Analyse Pixtral Terminée'}
-          </h3>
-          <p style="font-weight:600; font-size:1.05em;">${v.summary || ""}</p>
-          <p style="color: var(--secondary-text-color);">${v.description || ""}</p>
-          
-          ${v.objects_detected && v.objects_detected.length > 0 ? `
-            <div style="margin-top: 12px;">
-              <strong>Objets détectés :</strong>
-              <div class="chips-container" style="margin-top:6px;">
-                ${v.objects_detected.map(obj => `<span class="chip" style="cursor:default;">🔍 ${obj}</span>`).join("")}
+        ${this._showIgnored && this._ignoredIssues.length > 0 ? `
+          <div style="margin-top: 30px;">
+            <h3>Erreurs ignorées</h3>
+            ${this._ignoredIssues.map(id => `
+              <div class="issue-card" style="opacity: 0.7;">
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                  <span>ID : <code>${this._escapeHtml(id)}</code></span>
+                  <button class="btn btn-secondary btn-unignore" data-id="${this._escapeHtml(id)}">
+                    ↩️ Réactiver
+                  </button>
+                </div>
               </div>
-            </div>
-          ` : ''}
-        </div>
-      `;
-    }
+            `).join("")}
+          </div>
+        ` : ""}
+      </div>
+    `;
+  }
+
+  _renderIssueCard(issue) {
+    const hasAuto = issue.auto_fix_script && issue.auto_fix_script.length > 0;
+    const borderColor = this._severityColor(issue.severity);
 
     return `
-      <div style="max-width: 800px; margin: 0 auto;">
-        <div class="card">
-          <h2 style="margin-top:0;">👁️ Vision & Surveillance par IA (Pixtral)</h2>
-          <p style="color: var(--secondary-text-color);">
-            Analysez en direct un snapshot de vos caméras pour détecter colis, présences humaines ou anomalies visuelles.
-          </p>
+      <div class="issue-card" style="border-left-color: ${borderColor};">
+        <div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; margin-bottom: 8px;">
+          <div>
+            <span class="badge" style="background: ${borderColor};">${this._severityLabel(issue.severity)}</span>
+            <span class="badge" style="background: rgba(0,0,0,0.1); color: var(--primary-text-color); margin-left: 6px;">
+              ${this._categoryIcon(issue.category)}
+            </span>
+            <h3 style="margin: 8px 0 4px 0; font-size: 1.1em;">${this._escapeHtml(issue.title || "Anomalie détectée")}</h3>
+          </div>
+          <div style="display: flex; gap: 6px;">
+            <button class="btn btn-secondary btn-ignore" data-id="${this._escapeHtml(issue.id)}" title="Ignorer cette alerte">
+              👁️ Ignorer
+            </button>
+            <button class="btn btn-primary btn-manual" data-id="${this._escapeHtml(issue.id)}">
+              📖 Manuel
+            </button>
+            ${hasAuto ? `
+              <button class="btn btn-success btn-autofix" data-id="${this._escapeHtml(issue.id)}">
+                ⚡ Auto-Fix
+              </button>
+            ` : ""}
+          </div>
+        </div>
 
-          <label style="font-weight:600; display:block; margin-bottom:6px;">Sélectionner une caméra :</label>
-          <select class="input-field" id="vision-camera-select">
-            <option value="">-- Choisir une caméra (${cameraEntities.length} disponibles) --</option>
-            ${cameraEntities.map(id => `
-              <option value="${id}" ${this._selectedCamera === id ? 'selected' : ''}>
-                ${this._hass.states[id].attributes.friendly_name || id} (${id})
-              </option>
+        <p style="margin: 6px 0; font-size: 0.9em; color: var(--primary-text-color);">
+          ${this._escapeHtml(issue.description || "")}
+        </p>
+
+        ${issue.file ? `
+          <div style="font-size: 0.8em; color: var(--secondary-text-color); margin-top: 6px;">
+            📁 Fichier concerné : <code>${this._escapeHtml(issue.file)}</code> ${issue.line ? `(Ligne ${issue.line})` : ""}
+          </div>
+        ` : ""}
+      </div>
+    `;
+  }
+
+  _renderGeneratorTab() {
+    return `
+      <div class="card">
+        <h2 style="margin-top:0;">✨ Générateur d'Automations par IA</h2>
+        <p style="color: var(--secondary-text-color);">
+          Décrivez ce que vous souhaitez automatiser en langage naturel. Mistral générera le code YAML adapté en utilisant vos véritables entités.
+        </p>
+
+        <textarea id="gen-prompt-input" rows="4" style="width: 100%; border-radius: 8px; padding: 12px; font-family: inherit; font-size: 0.95em; border: 1px solid var(--divider-color, #ccc); box-sizing: border-box;" placeholder="Exemple : Quand la porte du garage s'ouvre après 22h, allume les lumières du salon en rouge et envoie une notification sur mon téléphone.">${this._escapeHtml(this._genPrompt)}</textarea>
+
+        <div style="margin-top: 14px;">
+          <button class="btn btn-primary" id="btn-do-generate" ${this._isGenerating ? "disabled" : ""}>
+            ${this._isGenerating ? '<span class="spinner"></span>Génération en cours...' : '✨ Générer l'automation'}
+          </button>
+        </div>
+
+        ${this._generatedAutomation ? `
+          <div style="margin-top: 24px; padding-top: 20px; border-top: 1px solid var(--divider-color, #e0e0e0);">
+            <h3>${this._escapeHtml(this._generatedAutomation.title || "Nouvelle automation")}</h3>
+            <p>${this._escapeHtml(this._generatedAutomation.description || "")}</p>
+            <div class="code-block">${this._escapeHtml(this._generatedAutomation.yaml || "")}</div>
+            <button class="btn btn-success" id="btn-save-generated-auto">
+              💾 Injecter dans automations.yaml
+            </button>
+          </div>
+        ` : ""}
+      </div>
+    `;
+  }
+
+  _renderAssistTab() {
+    return `
+      <div class="card" style="display: flex; flex-direction: column; height: 600px;">
+        <h2 style="margin-top:0;">🎙️ DomoLink Assist Agent</h2>
+        <div id="chat-box" style="flex: 1; overflow-y: auto; padding: 12px; background: rgba(0,0,0,0.02); border-radius: 8px; margin-bottom: 12px; display: flex; flex-direction: column; gap: 10px;">
+          ${this._chatMessages.map(msg => `
+            <div style="align-self: ${msg.role === "user" ? "flex-end" : "flex-start"}; background: ${msg.role === "user" ? "var(--primary-color, #03a9f4)" : "var(--card-background-color, #fff)"}; color: ${msg.role === "user" ? "#fff" : "var(--primary-text-color)"}; padding: 10px 14px; border-radius: 12px; max-width: 80%; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
+              <div>${this._escapeHtml(msg.text)}</div>
+              ${msg.services && msg.services.length > 0 ? `
+                <div style="margin-top: 6px; font-size: 0.75em; opacity: 0.85;">
+                  ⚡ Action exécutée : <code>${this._escapeHtml(msg.services.join(", "))}</code>
+                </div>
+              ` : ""}
+            </div>
+          `).join("")}
+        </div>
+
+        <div style="display: flex; gap: 8px;">
+          <input type="text" id="chat-input" value="${this._escapeHtml(this._chatInput)}" placeholder="Tapez une commande ou posez une question..." style="flex: 1; padding: 10px 14px; border-radius: 8px; border: 1px solid var(--divider-color, #ccc); font-family: inherit;" />
+          <button class="btn btn-primary" id="btn-chat-send" ${this._isAssisting ? "disabled" : ""}>
+            ${this._isAssisting ? '<span class="spinner"></span>' : 'Envoyer'}
+          </button>
+        </div>
+      </div>
+    `;
+  }
+
+  _renderVisionTab() {
+    const cameras = this._hass ? Object.keys(this._hass.states).filter(id => id.startsWith("camera.")) : [];
+
+    return `
+      <div class="card">
+        <h2 style="margin-top:0;">👁️ Surveillance Intelligente Pixtral Vision</h2>
+        <p style="color: var(--secondary-text-color);">
+          Analysez instantanément les flux de vos caméras pour détecter colis, présences suspectes ou anomalies.
+        </p>
+
+        <div style="margin-bottom: 14px;">
+          <label style="font-weight: 600; font-size: 0.9em; display: block; margin-bottom: 6px;">Sélectionner une caméra :</label>
+          <select id="vision-camera-select" style="width: 100%; padding: 10px; border-radius: 8px; border: 1px solid var(--divider-color, #ccc); font-family: inherit;">
+            <option value="">-- Choisir une caméra --</option>
+            ${cameras.map(cam => `
+              <option value="${cam}" ${this._selectedCamera === cam ? "selected" : ""}>${cam}</option>
             `).join("")}
           </select>
-
-          <label style="font-weight:600; display:block; margin-bottom:6px;">Question / Consigne d'analyse :</label>
-          <textarea class="input-field" id="vision-prompt-input" rows="2">${this._visionPrompt}</textarea>
-
-          <div style="display:flex; justify-content:flex-end;">
-            <button class="btn btn-primary" id="btn-do-vision" ${this._isAnalyzingVision ? "disabled" : ""}>
-              ${this._isAnalyzingVision ? '<span class="spinner"></span>Analyse Pixtral en cours...' : '📸 Capturer & Analyser'}
-            </button>
-          </div>
         </div>
 
-        ${resultHtml}
+        <div style="margin-bottom: 14px;">
+          <label style="font-weight: 600; font-size: 0.9em; display: block; margin-bottom: 6px;">Instructions pour Pixtral :</label>
+          <input type="text" id="vision-prompt-input" value="${this._escapeHtml(this._visionPrompt)}" style="width: 100%; padding: 10px; border-radius: 8px; border: 1px solid var(--divider-color, #ccc); font-family: inherit; box-sizing: border-box;" />
+        </div>
+
+        <button class="btn btn-primary" id="btn-do-vision" ${this._isAnalyzingVision ? "disabled" : ""}>
+          ${this._isAnalyzingVision ? '<span class="spinner"></span>Analyse de l'image...' : '📸 Analyser la caméra'}
+        </button>
+
+        ${this._visionResult ? `
+          <div style="margin-top: 24px; padding-top: 20px; border-top: 1px solid var(--divider-color, #e0e0e0);">
+            <h3>Résultat de l'analyse</h3>
+            <p><strong>Résumé :</strong> ${this._escapeHtml(this._visionResult.summary || "")}</p>
+            <p><strong>Détails :</strong> ${this._escapeHtml(this._visionResult.description || "")}</p>
+          </div>
+        ` : ""}
       </div>
     `;
   }
 
-  /* ═══════════════════════════════════════════════════════
-     ONGLET 6 : SMART BRIEFING
-     ═══════════════════════════════════════════════════════ */
   _renderBriefingTab() {
-    let resultHtml = "";
-    if (this._briefingResult) {
-      const b = this._briefingResult;
-      resultHtml = `
-        <div class="card" style="border: 2px solid var(--primary-color, #03a9f4); margin-top: 20px;">
-          <h2 style="margin-top:0; color: var(--primary-color, #03a9f4);">🎙️ ${b.title || "Smart Briefing"}</h2>
-          <div style="font-size: 1.1em; line-height: 1.6; padding: 14px; background: rgba(3,169,244,0.06); border-radius: 8px; margin-bottom: 14px;">
-            ${b.speech_text || ""}
-          </div>
+    return `
+      <div class="card">
+        <h2 style="margin-top:0;">📰 Smart Daily Briefing</h2>
+        <p style="color: var(--secondary-text-color);">
+          Mistral compile l'état de votre maison (météo, lumières, ouvertures, batteries) et vous offre une synthèse vocale et visuelle personnalisée.
+        </p>
 
-          ${b.highlights && b.highlights.length > 0 ? `
-            <ul>
-              ${b.highlights.map(h => `<li>${h}</li>`).join("")}
-            </ul>
-          ` : ''}
-
-          <div style="display:flex; gap:12px; justify-content:flex-end; margin-top:16px;">
-            <button class="btn btn-ignore" id="btn-copy-briefing">📋 Copier</button>
-            <button class="btn btn-success" id="btn-speak-briefing">🔊 Écouter (Vocal)</button>
-          </div>
+        <div style="display: flex; gap: 12px; margin-bottom: 14px; flex-wrap: wrap;">
+          <select id="briefing-time-select" style="padding: 10px; border-radius: 8px; border: 1px solid var(--divider-color, #ccc); font-family: inherit;">
+            <option value="auto" ${this._briefingTimeOfDay === "auto" ? "selected" : ""}>Automatique</option>
+            <option value="morning" ${this._briefingTimeOfDay === "morning" ? "selected" : ""}>Matin</option>
+            <option value="evening" ${this._briefingTimeOfDay === "evening" ? "selected" : ""}>Soir</option>
+          </select>
+          <input type="text" id="briefing-custom-input" placeholder="Instruction spéciale (ex: Ajoute une citation motivante)" value="${this._escapeHtml(this._briefingCustom)}" style="flex: 1; min-width: 250px; padding: 10px; border-radius: 8px; border: 1px solid var(--divider-color, #ccc); font-family: inherit;" />
         </div>
-      `;
-    }
+
+        <button class="btn btn-primary" id="btn-do-briefing" ${this._isGeneratingBriefing ? "disabled" : ""}>
+          ${this._isGeneratingBriefing ? '<span class="spinner"></span>Génération du briefing...' : '📰 Générer le Briefing'}
+        </button>
+
+        ${this._briefingResult ? `
+          <div style="margin-top: 24px; padding-top: 20px; border-top: 1px solid var(--divider-color, #e0e0e0);">
+            <h3>${this._escapeHtml(this._briefingResult.title || "Smart Briefing")}</h3>
+            <p style="font-size: 1.05em; line-height: 1.5;">${this._escapeHtml(this._briefingResult.speech_text || "")}</p>
+            <div style="display: flex; gap: 8px; margin-top: 14px;">
+              <button class="btn btn-success" id="btn-speak-briefing">🔊 Écouter</button>
+              <button class="btn btn-secondary" id="btn-copy-briefing">📋 Copier</button>
+            </div>
+          </div>
+        ` : ""}
+      </div>
+    `;
+  }
+
+  _renderUpdateModal() {
+    if (!this._showUpdateModal || !this._updateInfo) return "";
 
     return `
-      <div style="max-width: 800px; margin: 0 auto;">
-        <div class="card">
-          <h2 style="margin-top:0;">📰 Smart Briefing Quotidien</h2>
-          <p style="color: var(--secondary-text-color);">
-            Générez une synthèse vocale intelligente de votre maison (météo, lumières oubliées, fenêtres ouvertes, batteries faibles).
-          </p>
-
-          <label style="font-weight:600; display:block; margin-bottom:6px;">Moment du briefing :</label>
-          <select class="input-field" id="briefing-time-select">
-            <option value="auto" ${this._briefingTimeOfDay === 'auto' ? 'selected' : ''}>⏱️ Automatique (selon l'heure)</option>
-            <option value="morning" ${this._briefingTimeOfDay === 'morning' ? 'selected' : ''}>☀️ Matin (Réveil & Météo)</option>
-            <option value="evening" ${this._briefingTimeOfDay === 'evening' ? 'selected' : ''}>🌙 Soir (Bilan & Sécurité)</option>
-          </select>
-
-          <label style="font-weight:600; display:block; margin-bottom:6px;">Consigne particulière (optionnelle) :</label>
-          <input type="text" class="input-field" id="briefing-custom-input" placeholder="Ex: Inclus une citation motivante, sois très concis..." value="${this._briefingCustom}">
-
-          <div style="display:flex; justify-content:flex-end;">
-            <button class="btn btn-primary" id="btn-do-briefing" ${this._isGeneratingBriefing ? "disabled" : ""}>
-              ${this._isGeneratingBriefing ? '<span class="spinner"></span>Génération du briefing...' : '📰 Générer le Briefing'}
-            </button>
+      <div class="modal-overlay">
+        <div class="modal" style="max-width: 600px;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+            <h2 style="margin: 0; display: flex; align-items: center; gap: 8px;">
+              🚀 Mise à jour DomoLink-Mistral IA
+            </h2>
+            ${!this._isUpdatingComponent ? `
+              <button id="btn-close-update-modal" style="background: none; border: none; font-size: 1.4em; cursor: pointer;">&times;</button>
+            ` : ""}
           </div>
-        </div>
 
-        ${resultHtml}
+          <div style="background: rgba(3,169,244,0.08); padding: 12px 16px; border-radius: 8px; margin-bottom: 16px; display: flex; justify-content: space-between; align-items: center;">
+            <div>
+              <strong>Version installée :</strong> v${this._escapeHtml(this._updateInfo.current_version)}
+            </div>
+            <div style="font-size: 1.2em;">➔</div>
+            <div>
+              <strong>Nouvelle version :</strong> <span style="color: #ff416c; font-weight: bold;">${this._escapeHtml(this._updateInfo.release_tag)}</span>
+            </div>
+          </div>
+
+          ${this._isUpdatingComponent ? `
+            <div style="text-align: center; padding: 20px 0;">
+              <div class="big-spinner" style="margin: 0 auto 16px auto;"></div>
+              <h3 style="margin: 0 0 8px 0;">Mise à jour en cours...</h3>
+              <p style="color: var(--primary-color, #03a9f4); font-weight: 600;">
+                ${this._escapeHtml(this._updateStepText)}
+              </p>
+
+              <div class="progress-bar-bg">
+                <div class="progress-bar-fill" style="width: ${this._updateProgress}%;"></div>
+              </div>
+
+              ${this._rebootCountdown > 0 ? `
+                <div style="margin-top: 14px; font-size: 0.9em; color: var(--secondary-text-color);">
+                  Reconnexion automatique dans <strong>${this._rebootCountdown}s</strong>...
+                </div>
+              ` : ""}
+            </div>
+          ` : `
+            <div>
+              <h4 style="margin: 12px 0 6px 0;">📋 Notes de version & Nouveautés :</h4>
+              <div class="code-block" style="max-height: 250px; background: #252526;">${this._escapeHtml(this._updateInfo.changelog || "Mise à jour d'optimisation et de sécurité.")}</div>
+
+              <div style="background: rgba(76,175,80,0.08); padding: 12px; border-radius: 8px; margin: 16px 0; font-size: 0.85em; color: var(--secondary-text-color);">
+                🛡️ <strong>Sécurité garantie :</strong> Une sauvegarde locale préalable de votre dossier d'intégration sera automatiquement créée avant tout remplacement de fichier.
+              </div>
+
+              <div style="display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px;">
+                <button class="btn btn-secondary" id="btn-cancel-update-modal">Annuler</button>
+                <button class="btn-update-pulse" id="btn-modal-install-update" style="padding: 10px 20px;">
+                  ⚡ Lancer la mise à jour (1-Clic)
+                </button>
+              </div>
+            </div>
+          `}
+        </div>
       </div>
     `;
   }
 
-  /* ═══════════════════════════════════════════════════════
-     MODAL MANUELLE & BOITE DE CONFIRMATION AVEC DIFF
-     ═══════════════════════════════════════════════════════ */
   _renderModal() {
     if (!this._selectedIssue) return "";
-    const x = this._modalPos.x !== null ? this._modalPos.x : (window.innerWidth - 470);
-    const y = this._modalPos.y !== null ? this._modalPos.y : 30;
+    const issue = this._selectedIssue;
 
     return `
-      <div class="modal" id="modal" style="top: ${y}px; left: ${x}px;">
-        <div class="modal-header" id="modal-header">
-          📖 Guide Pas-à-Pas : ${this._selectedIssue.title}
-          <button class="modal-close" id="modal-close">✕</button>
+      <div class="modal-floating" id="modal" style="left: ${this._modalPos.x !== null ? this._modalPos.x + "px" : "calc(50vw - 240px)"}; top: ${this._modalPos.y !== null ? this._modalPos.y + "px" : "100px"};">
+        <div id="modal-header" style="padding: 12px 16px; background: var(--primary-color, #03a9f4); color: white; cursor: move; display: flex; justify-content: space-between; align-items: center; user-select: none;">
+          <h3 style="margin: 0; font-size: 1em;">📖 Guide de Résolution Manuel</h3>
+          <button id="modal-close" style="background: none; border: none; color: white; font-size: 1.2em; cursor: pointer;">&times;</button>
         </div>
-        <div class="modal-body">${this._selectedIssue.manual_fix || "Aucune instruction détaillée disponible."}</div>
+        <div style="padding: 16px; overflow-y: auto;">
+          <h4>${this._escapeHtml(issue.title)}</h4>
+          <p>${this._escapeHtml(issue.description)}</p>
+
+          ${issue.file ? `
+            <p><strong>Fichier :</strong> <code>${this._escapeHtml(issue.file)}</code> ${issue.line ? `(Ligne ${issue.line})` : ""}</p>
+          ` : ""}
+
+          ${issue.manual_guide ? `
+            <div style="background: rgba(0,0,0,0.03); padding: 12px; border-radius: 8px; font-size: 0.9em; margin-top: 10px;">
+              <strong>Étapes à suivre :</strong>
+              <div style="white-space: pre-wrap; margin-top: 6px;">${this._escapeHtml(issue.manual_guide)}</div>
+            </div>
+          ` : ""}
+        </div>
       </div>
     `;
   }
 
   _renderConfirmDialog() {
     if (!this._confirmData) return "";
-    const hasAction = this._confirmData.onConfirm !== null;
-    let diffHtml = "";
-
-    if (this._confirmData.actions && Array.isArray(this._confirmData.actions)) {
-      for (const act of this._confirmData.actions) {
-        if (act.action_type === "yaml_edit" || act.file) {
-          diffHtml += `
-            <div class="diff-container">
-              <div class="diff-file-label">📄 Fichier cible : ${act.file}</div>
-              ${act.find ? `<div class="diff-line-remove"><strong>- À remplacer :</strong><br>${act.find}</div>` : ''}
-              ${act.replace ? `<div class="diff-line-add"><strong>+ Nouveau code :</strong><br>${act.replace}</div>` : ''}
-              ${act.content ? `<div class="diff-line-add"><strong>+ Code injecté :</strong><br>${act.content}</div>` : ''}
-            </div>
-          `;
-        } else if (act.domain && act.service) {
-          diffHtml += `
-            <div class="service-call-box">
-              ⚡ <strong>Appel de service :</strong> ${act.domain}.${act.service}
-              ${act.service_data ? `<pre style="margin:4px 0 0 0;">${JSON.stringify(act.service_data, null, 2)}</pre>` : ''}
-            </div>
-          `;
-        }
-      }
-    }
-
     return `
-      <div class="confirm-overlay" id="confirm-overlay">
-        <div class="confirm-box">
-          <h3>${this._confirmData.title || "Confirmation requise"}</h3>
-          <p>${this._confirmData.message}</p>
-          ${diffHtml}
-          <div class="confirm-buttons">
-            ${hasAction ? `<button class="btn btn-ignore" id="btn-confirm-cancel">Annuler</button>` : ''}
-            <button class="btn ${hasAction ? 'btn-auto' : 'btn-primary'}" id="btn-confirm-ok">${hasAction ? 'Confirmer & Appliquer' : 'Compris'}</button>
+      <div class="modal-overlay">
+        <div class="modal" style="max-width: 450px;">
+          <h3 style="margin-top:0;">${this._escapeHtml(this._confirmData.title || "Confirmation")}</h3>
+          <p>${this._escapeHtml(this._confirmData.message || "Voulez-vous continuer ?")}</p>
+          <div style="display: flex; justify-content: flex-end; gap: 8px; margin-top: 20px;">
+            <button class="btn btn-secondary" id="btn-confirm-cancel">Annuler</button>
+            <button class="btn btn-warning" id="btn-confirm-ok">Confirmer</button>
           </div>
         </div>
       </div>
     `;
   }
 
-  /* ═══════════════════════════════════════════════════════
-     GESTIONNAIRE D'ÉVÉNEMENTS
-     ═══════════════════════════════════════════════════════ */
   _attachEvents() {
     const root = this.shadowRoot;
 
-    // Navigation entre les 6 onglets
-    root.querySelectorAll("[data-tab]").forEach(btn => {
-      btn.addEventListener("click", () => {
-        this._activeTab = btn.dataset.tab;
+    // Header Quick Scan
+    const btnQuick = root.getElementById("btn-quick-scan");
+    if (btnQuick) {
+      btnQuick.addEventListener("click", () => {
+        this._isAnalyzing = true;
+        this._render();
+        this._hass.callService("domolink_mistral", "analyze_now", {});
+      });
+    }
+
+    // Header Update Button
+    const btnHeaderUpdate = root.getElementById("btn-header-update");
+    if (btnHeaderUpdate) {
+      btnHeaderUpdate.addEventListener("click", () => {
+        this._showUpdateModal = true;
+        this._render();
+      });
+    }
+
+    // Banner Update Buttons
+    const btnBannerUpdate = root.getElementById("btn-banner-update");
+    if (btnBannerUpdate) {
+      btnBannerUpdate.addEventListener("click", () => {
+        this._showUpdateModal = true;
+        this._render();
+      });
+    }
+    const btnBannerChangelog = root.getElementById("btn-banner-changelog");
+    if (btnBannerChangelog) {
+      btnBannerChangelog.addEventListener("click", () => {
+        this._showUpdateModal = true;
+        this._render();
+      });
+    }
+
+    // Modal Update Buttons
+    const btnCloseUpdateModal = root.getElementById("btn-close-update-modal");
+    if (btnCloseUpdateModal) {
+      btnCloseUpdateModal.addEventListener("click", () => {
+        this._showUpdateModal = false;
+        this._render();
+      });
+    }
+    const btnCancelUpdateModal = root.getElementById("btn-cancel-update-modal");
+    if (btnCancelUpdateModal) {
+      btnCancelUpdateModal.addEventListener("click", () => {
+        this._showUpdateModal = false;
+        this._render();
+      });
+    }
+    const btnModalInstall = root.getElementById("btn-modal-install-update");
+    if (btnModalInstall) {
+      btnModalInstall.addEventListener("click", () => {
+        this._startAutoUpdate();
+      });
+    }
+
+    // Manual check update from Audit tab
+    const btnCheckUpdateManual = root.getElementById("btn-check-update-manual");
+    if (btnCheckUpdateManual) {
+      btnCheckUpdateManual.addEventListener("click", async () => {
+        btnCheckUpdateManual.textContent = "⏳ Recherche...";
+        await this._checkUpdate();
+        setTimeout(() => {
+          if (btnCheckUpdateManual) btnCheckUpdateManual.textContent = "🔄 Vérifier les Mises à Jour";
+        }, 1500);
+      });
+    }
+
+    // Navigation Tabs
+    root.querySelectorAll(".tab-btn").forEach(btn => {
+      btn.addEventListener("click", (e) => {
+        this._activeTab = e.currentTarget.dataset.tab;
         this._render();
       });
     });
 
-    // Bouton Quick Scan / Audit
-    const btnQuickScan = root.getElementById("btn-quick-scan");
-    if (btnQuickScan) {
-      btnQuickScan.addEventListener("click", () => {
+    const btnTabAuditScan = root.getElementById("btn-tab-audit-scan");
+    if (btnTabAuditScan) {
+      btnTabAuditScan.addEventListener("click", () => {
         this._isAnalyzing = true;
         this._render();
         this._hass.callService("domolink_mistral", "analyze_now", {});
       });
     }
 
-    const btnRunFullAudit = root.getElementById("btn-run-full-audit");
-    if (btnRunFullAudit) {
-      btnRunFullAudit.addEventListener("click", () => {
-        this._isAnalyzing = true;
-        this._render();
-        this._hass.callService("domolink_mistral", "analyze_now", {});
-      });
-    }
-
-    const btnGotoRepair = root.getElementById("btn-goto-repair");
-    if (btnGotoRepair) {
-      btnGotoRepair.addEventListener("click", () => {
+    const btnTabRepairGoto = root.getElementById("btn-tab-repair-goto");
+    if (btnTabRepairGoto) {
+      btnTabRepairGoto.addEventListener("click", () => {
         this._activeTab = "repair";
         this._render();
       });
     }
 
-    // Filtres d'anomalies
-    root.querySelectorAll("[data-filter]").forEach(btn => {
-      btn.addEventListener("click", () => {
-        this._repairFilter = btn.dataset.filter;
-        this._render();
-      });
-    });
+    // Repair Filter Buttons
+    const fAll = root.getElementById("btn-filter-all");
+    if (fAll) fAll.addEventListener("click", () => { this._repairFilter = "all"; this._render(); });
+    const fHigh = root.getElementById("btn-filter-high");
+    if (fHigh) fHigh.addEventListener("click", () => { this._repairFilter = "high"; this._render(); });
+    const fMed = root.getElementById("btn-filter-med");
+    if (fMed) fMed.addEventListener("click", () => { this._repairFilter = "medium"; this._render(); });
+    const fLow = root.getElementById("btn-filter-low");
+    if (fLow) fLow.addEventListener("click", () => { this._repairFilter = "low"; this._render(); });
 
-    // Actions sur les anomalies (Manuel / Auto / Ignorer)
-    root.querySelectorAll("[data-action]").forEach(btn => {
-      btn.addEventListener("click", () => {
-        const action = btn.dataset.action;
-        const id = btn.dataset.id;
-        const all = [...this._issues, ...this._ignoredIssues];
-        const issue = all.find(i => i.id === id);
-
-        if (action === "ignore") {
-          this._hass.callService("domolink_mistral", "ignore_issue", { issue_id: id });
-        } else if (action === "unignore") {
-          this._hass.callService("domolink_mistral", "unignore_issue", { issue_id: id });
-        } else if (action === "manual" && issue) {
-          this._selectedIssue = issue;
-          this._modalPos = { x: null, y: null };
-          this._render();
-        } else if (action === "auto" && issue) {
-          const hasFix = issue.auto_fix_script && issue.auto_fix_script.length > 0;
-          if (hasFix) {
-            this._confirmData = {
-              title: `🔧 Réparation : ${issue.title}`,
-              message: "Une sauvegarde de sécurité (.bak) sera créée avant d'appliquer ce correctif :",
-              actions: issue.auto_fix_script,
-              onConfirm: () => {
-                this._isApplying = true;
-                this._render();
-                this._hass.callService("domolink_mistral", "apply_fix", {
-                  fix_script: JSON.stringify(issue.auto_fix_script),
-                  issue_id: id
-                });
-              }
-            };
-          } else {
-            this._confirmData = {
-              title: `ℹ️ ${issue.title}`,
-              message: "Aucun correctif automatique disponible pour ce problème. Suivez le guide « 📖 Manuel ».",
-              onConfirm: null
-            };
-          }
-          this._render();
-        }
-      });
-    });
-
-    // All Auto
-    const btnAllAuto = root.getElementById("btn-allauto");
-    if (btnAllAuto) {
-      btnAllAuto.addEventListener("click", () => {
-        const fixable = this._issues.filter(i => i.auto_fix_script && i.auto_fix_script.length > 0);
-        const allActs = [];
-        fixable.forEach(f => { if (Array.isArray(f.auto_fix_script)) allActs.push(...f.auto_fix_script); });
-
+    // All Auto Repair
+    const btnRepairAll = root.getElementById("btn-repair-all");
+    if (btnRepairAll) {
+      btnRepairAll.addEventListener("click", () => {
         this._confirmData = {
-          title: "⚡ Exécuter All Auto",
-          message: `Une sauvegarde globale (.bak) sera créée puis ${fixable.length} correctif(s) seront appliqués :`,
-          actions: allActs,
+          title: "⚡ Appliquer tous les correctifs automatiques ?",
+          message: "Une sauvegarde globale sera effectuée avant d'appliquer l'ensemble des correctifs.",
           onConfirm: () => {
             this._isApplying = true;
             this._render();
@@ -999,31 +1208,79 @@ class DomolinkMistralPanel extends HTMLElement {
       });
     }
 
-    // Generator Events
-    root.querySelectorAll(".chip[data-prompt]").forEach(chip => {
-      chip.addEventListener("click", () => {
-        const text = chip.dataset.prompt;
-        const textarea = root.getElementById("gen-prompt-input");
-        if (textarea) { textarea.value = text; this._genPrompt = text; }
+    // Toggle Ignored
+    const btnToggleIgnored = root.getElementById("btn-toggle-ignored");
+    if (btnToggleIgnored) {
+      btnToggleIgnored.addEventListener("click", () => {
+        this._showIgnored = !this._showIgnored;
+        this._render();
+      });
+    }
+
+    // Single Issue Actions
+    root.querySelectorAll(".btn-autofix").forEach(btn => {
+      btn.addEventListener("click", (e) => {
+        const id = e.currentTarget.dataset.id;
+        const issue = this._issues.find(i => i.id === id);
+        if (!issue) return;
+
+        this._confirmData = {
+          title: `⚡ Corriger "${issue.title}" ?`,
+          message: "Une sauvegarde sera effectuée avant d'appliquer ce correctif.",
+          onConfirm: () => {
+            this._isApplying = true;
+            this._render();
+            this._hass.callService("domolink_mistral", "apply_fix", {
+              fix_script: issue.auto_fix_script,
+              issue_id: issue.id
+            });
+          }
+        };
+        this._render();
       });
     });
 
-    const genInput = root.getElementById("gen-prompt-input");
-    if (genInput) {
-      genInput.addEventListener("input", (e) => { this._genPrompt = e.target.value; });
-    }
+    root.querySelectorAll(".btn-manual").forEach(btn => {
+      btn.addEventListener("click", (e) => {
+        const id = e.currentTarget.dataset.id;
+        this._selectedIssue = this._issues.find(i => i.id === id);
+        this._render();
+      });
+    });
 
+    root.querySelectorAll(".btn-ignore").forEach(btn => {
+      btn.addEventListener("click", (e) => {
+        const id = e.currentTarget.dataset.id;
+        this._hass.callService("domolink_mistral", "ignore_issue", { issue_id: id });
+      });
+    });
+
+    root.querySelectorAll(".btn-unignore").forEach(btn => {
+      btn.addEventListener("click", (e) => {
+        const id = e.currentTarget.dataset.id;
+        this._hass.callService("domolink_mistral", "unignore_issue", { issue_id: id });
+      });
+    });
+
+    // Generator Events
+    const genPrompt = root.getElementById("gen-prompt-input");
+    if (genPrompt) {
+      genPrompt.addEventListener("input", (e) => { this._genPrompt = e.target.value; });
+    }
     const btnDoGen = root.getElementById("btn-do-generate");
     if (btnDoGen) {
       btnDoGen.addEventListener("click", async () => {
-        const prompt = this._genPrompt.trim();
-        if (!prompt) return;
+        if (!this._genPrompt.trim()) return;
         this._isGenerating = true;
         this._render();
 
         try {
-          const resp = await this._hass.callService("domolink_mistral", "generate_automation", { prompt });
-          if (resp && resp.response) this._generatedAutomation = resp.response;
+          const resp = await this._hass.callService("domolink_mistral", "generate_automation", {
+            prompt: this._genPrompt
+          });
+          if (resp && resp.response) {
+            this._generatedAutomation = resp.response;
+          }
         } catch (e) {
           console.error(e);
         } finally {
@@ -1033,41 +1290,22 @@ class DomolinkMistralPanel extends HTMLElement {
       });
     }
 
-    const btnCopyYaml = root.getElementById("btn-copy-yaml");
-    if (btnCopyYaml && this._generatedAutomation) {
-      btnCopyYaml.addEventListener("click", () => {
-        navigator.clipboard.writeText(this._generatedAutomation.yaml || "");
-        btnCopyYaml.textContent = "✅ Copié !";
-        setTimeout(() => { if (btnCopyYaml) btnCopyYaml.textContent = "📋 Copier le YAML"; }, 2000);
-      });
-    }
-
-    const btnSaveAuto = root.getElementById("btn-save-automation");
-    if (btnSaveAuto && this._generatedAutomation) {
-      btnSaveAuto.addEventListener("click", () => {
-        this._confirmData = {
-          title: `💾 Enregistrer l'automation`,
-          message: `L'automation "${this._generatedAutomation.title}" sera injectée dans automations.yaml :`,
-          actions: [{ file: "automations.yaml", content: this._generatedAutomation.yaml }],
-          onConfirm: () => {
-            this._hass.callService("domolink_mistral", "save_automation", { yaml: this._generatedAutomation.yaml });
-            this._confirmData = {
-              title: "🎉 Succès !",
-              message: "Votre automation a été enregistrée et rechargée dans Home Assistant !",
-              onConfirm: null
-            };
-            this._render();
-          }
-        };
-        this._render();
+    const btnSaveGen = root.getElementById("btn-save-generated-auto");
+    if (btnSaveGen && this._generatedAutomation) {
+      btnSaveGen.addEventListener("click", async () => {
+        await this._hass.callService("domolink_mistral", "save_automation", {
+          yaml: this._generatedAutomation.yaml
+        });
+        btnSaveGen.textContent = "✅ Enregistré dans automations.yaml !";
+        setTimeout(() => { if (btnSaveGen) btnSaveGen.textContent = "💾 Injecter dans automations.yaml"; }, 2500);
       });
     }
 
     // Assist Chat Events
-    const chatInput = root.getElementById("chat-input-text");
-    if (chatInput) {
-      chatInput.addEventListener("input", (e) => { this._chatInput = e.target.value; });
-      chatInput.addEventListener("keypress", (e) => {
+    const chatIn = root.getElementById("chat-input");
+    if (chatIn) {
+      chatIn.addEventListener("input", (e) => { this._chatInput = e.target.value; });
+      chatIn.addEventListener("keydown", (e) => {
         if (e.key === "Enter") {
           const btnSend = root.getElementById("btn-chat-send");
           if (btnSend) btnSend.click();
@@ -1075,78 +1313,38 @@ class DomolinkMistralPanel extends HTMLElement {
       });
     }
 
-    root.querySelectorAll(".chip[data-chat]").forEach(chip => {
-      chip.addEventListener("click", () => {
-        const text = chip.dataset.chat;
-        const input = root.getElementById("chat-input-text");
-        if (input) { input.value = text; this._chatInput = text; }
-        const btnSend = root.getElementById("btn-chat-send");
-        if (btnSend) btnSend.click();
-      });
-    });
-
     const btnChatSend = root.getElementById("btn-chat-send");
     if (btnChatSend) {
       btnChatSend.addEventListener("click", async () => {
         const text = this._chatInput.trim();
-        const camSelect = root.getElementById("chat-camera-select");
-        const camId = camSelect ? camSelect.value : "";
+        if (!text) return;
 
-        // Si aucun texte et aucune caméra, on ne fait rien
-        if (!text && !camId) return;
-
-        // Message par défaut si image seule
-        const promptText = text || "Décris ce que tu vois.";
-
-        let userMsg = text;
-        if (camId) {
-          const camName = this._hass.states[camId]?.attributes?.friendly_name || camId;
-          userMsg = `📸 [${camName}] ${promptText}`;
-        }
-
-        this._chatMessages.push({ role: "user", text: userMsg || promptText, services: [] });
+        this._chatMessages.push({ role: "user", text, services: [] });
         this._chatInput = "";
         this._isAssisting = true;
         this._render();
 
+        const chatBox = this.shadowRoot.getElementById("chat-box");
+        if (chatBox) chatBox.scrollTop = chatBox.scrollHeight;
+
         try {
-          if (camId) {
-            // Analyse Vision Multimodale (Pixtral)
-            const resp = await this._hass.callService("domolink_mistral", "analyze_image", {
-              camera_entity_id: camId,
-              prompt: promptText
-            });
+          let agentId = "conversation.domolink_mistral_ia";
+          if (this._hass && this._hass.states) {
+            const found = Object.keys(this._hass.states).find(
+              k => k.startsWith("conversation.") && k.includes("domolink")
+            );
+            if (found) agentId = found;
+          }
 
-            if (resp && resp.response) {
-              const v = resp.response;
-              let replyHtml = `<strong style="color:var(--primary-color);">👁️ Analyse de l'image :</strong><br>${v.summary || ""}<br><br><span style="opacity:0.9">${v.description || ""}</span>`;
-              if (v.objects_detected && v.objects_detected.length > 0) {
-                 replyHtml += `<div style="margin-top:8px;"><strong>Objets détectés :</strong> ${v.objects_detected.join(", ")}</div>`;
-              }
-              if (v.security_alert || v.anomalies_detected) {
-                 replyHtml = `<span style="color:#f44336;">🚨 <strong>ALERTE DE SÉCURITÉ :</strong></span><br>${replyHtml}`;
-              }
-              this._chatMessages.push({ role: "assistant", text: replyHtml, services: [] });
-            } else {
-              this._chatMessages.push({ role: "assistant", text: "Erreur lors de l'analyse d'image.", services: [] });
-            }
-            
-            // Réinitialiser la sélection de la caméra après l'envoi
-            if (camSelect) camSelect.value = "";
-          } else {
-            // Découvrir l'agent de conversation Mistral disponible dans Home Assistant
-            const availableAgent = Object.keys(this._hass.states).find(
-              id => id.startsWith("conversation.") && (id.includes("mistral") || id.includes("domolink"))
-            ) || "conversation.domolink_mistral_mistral_ai";
+          const res = await this._hass.callWS({
+            type: "conversation/process",
+            text: text,
+            agent_id: agentId,
+            language: "fr"
+          });
 
-            // Chat texte normal
-            const resp = await this._hass.callWS({
-              type: "conversation/process",
-              text: text,
-              agent_id: availableAgent
-            });
-
-            const speech = resp?.response?.speech?.plain?.speech || "Action effectuée.";
+          if (res && res.response && res.response.speech) {
+            const speech = res.response.speech.plain.speech || "Action effectuée.";
             this._chatMessages.push({ role: "assistant", text: speech, services: [] });
           }
         } catch (e) {
