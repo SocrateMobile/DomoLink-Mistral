@@ -42,7 +42,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Configure DomoLink-Mistral depuis une entrée de configuration."""
     from .updater import UpdateManager
 
-    hass.data.setdefault(DOMAIN, {})
+    hass.data.setdefault(DOMAIN, {}).setdefault(entry.entry_id, {})
 
     # ── Gestionnaire de mise à jour ──
     updater = UpdateManager(hass, entry.entry_id)
@@ -51,6 +51,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     store = Store(hass, STORAGE_VERSION, STORAGE_KEY)
     stored_data = await store.async_load()
     ignored_ids: list[str] = stored_data.get("ignored_ids", []) if stored_data else []
+
+    cancel_listeners: list = []
 
     # ── Données de l'intégration ──
     hass.data[DOMAIN][entry.entry_id] = {
@@ -62,7 +64,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         "store": store,
         "ignored_ids": ignored_ids,
         "last_issues": [],  # Cache des derniers résultats bruts de Mistral
-        "cancel_listeners": [],  # Pour cleanup au unload
+        "cancel_listeners": cancel_listeners,  # Pour cleanup au unload
     }
 
     _LOGGER.info(
@@ -675,7 +677,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # ═══════════════════════════════════════════════════════
 
     scan_mode = entry.options.get(CONF_SCAN_MODE, MODE_MANUAL)
-    cancel_listeners = hass.data[DOMAIN][entry.entry_id]["cancel_listeners"]
 
     if scan_mode == MODE_LIVE:
         frequency = entry.options.get(CONF_SCAN_FREQUENCY, 1)
@@ -708,8 +709,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     else:
         _LOGGER.info("DomoLink-Mistral: Mode Manuel — analyse uniquement à la demande.")
 
-    # ── Charger les plateformes (sensor) ──
-    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    # ── Charger d'abord la plateforme sensor ──
+    await hass.config_entries.async_forward_entry_setups(entry, ["sensor"])
+
+    # ── Charger les autres plateformes dépendantes ──
+    remaining_platforms = [p for p in PLATFORMS if p != "sensor"]
+    if remaining_platforms:
+        await hass.config_entries.async_forward_entry_setups(entry, remaining_platforms)
 
     return True
 

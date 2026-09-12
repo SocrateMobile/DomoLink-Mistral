@@ -20,7 +20,8 @@ async def async_setup_entry(
     sensor = DomolinkMistralSensor(entry)
 
     # Stocke l'instance pour la mise à jour depuis les services
-    hass.data[DOMAIN][entry.entry_id]["sensor"] = sensor
+    entry_data = hass.data.setdefault(DOMAIN, {}).setdefault(entry.entry_id, {})
+    entry_data["sensor"] = sensor
 
     async_add_entities([sensor])
 

@@ -19,7 +19,7 @@ from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import DOMAIN, VERSION
-from .updater import UpdateManager
+from .updater import UpdateManager, get_installed_version
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -30,13 +30,14 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Configure la plateforme update."""
-    updater: UpdateManager = hass.data[DOMAIN][entry.entry_id].get("updater")
+    entry_data = hass.data.setdefault(DOMAIN, {}).setdefault(entry.entry_id, {})
+    updater: UpdateManager = entry_data.get("updater")
     if not updater:
         updater = UpdateManager(hass, entry.entry_id)
-        hass.data[DOMAIN][entry.entry_id]["updater"] = updater
+        entry_data["updater"] = updater
 
     entity = DomolinkMistralUpdateEntity(hass, entry, updater)
-    hass.data[DOMAIN][entry.entry_id]["update_entity"] = entity
+    entry_data["update_entity"] = entity
     async_add_entities([entity], True)
 
 
@@ -57,9 +58,10 @@ class DomolinkMistralUpdateEntity(UpdateEntity):
         self.hass = hass
         self._entry = entry
         self._updater = updater
+        current_ver = get_installed_version()
         self._attr_unique_id = f"{entry.entry_id}_update"
-        self._attr_installed_version = VERSION
-        self._attr_latest_version = VERSION
+        self._attr_installed_version = current_ver
+        self._attr_latest_version = current_ver
         self._attr_release_url = updater.release_url
         self._attr_release_summary = updater.changelog
 
@@ -71,7 +73,7 @@ class DomolinkMistralUpdateEntity(UpdateEntity):
             name="DomoLink-Mistral IA",
             manufacturer="SocrateMobile",
             model="Mistral AI Diagnostic & Assistant",
-            sw_version=VERSION,
+            sw_version=get_installed_version(),
         )
 
     @property

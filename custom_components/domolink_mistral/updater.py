@@ -50,6 +50,19 @@ def is_newer_version(latest: str, current: str) -> bool:
         return False
 
 
+def get_installed_version() -> str:
+    """Récupère la version installée depuis le manifest ou const."""
+    try:
+        manifest_path = os.path.join(os.path.dirname(__file__), "manifest.json")
+        if os.path.exists(manifest_path):
+            with open(manifest_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                return data.get("version", VERSION)
+    except Exception:
+        pass
+    return VERSION
+
+
 class UpdateManager:
     """Gestionnaire de vérification et d'application des mises à jour."""
 
@@ -57,10 +70,10 @@ class UpdateManager:
         """Initialisation."""
         self.hass = hass
         self.entry_id = entry_id
-        self.current_version: str = VERSION
-        self.latest_version: str = VERSION
+        self.current_version: str = get_installed_version()
+        self.latest_version: str = self.current_version
         self.has_update: bool = False
-        self.release_tag: str = f"v{VERSION}"
+        self.release_tag: str = f"v{self.current_version}"
         self.release_url: str = f"https://github.com/{GITHUB_REPO}/releases"
         self.changelog: str = ""
         self.zip_url: str | None = None
@@ -87,6 +100,7 @@ class UpdateManager:
                         tag_name = data.get("tag_name", "").strip()
                         clean_tag = tag_name.lstrip("vV")
 
+                        self.current_version = get_installed_version()
                         self.release_tag = tag_name or f"v{clean_tag}"
                         self.latest_version = clean_tag or self.current_version
                         self.release_url = data.get("html_url", self.release_url)

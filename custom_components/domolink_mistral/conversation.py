@@ -105,9 +105,10 @@ class DomoLinkMistralConversationEntity(ConversationEntity):
 
         _LOGGER.info("DomoLink-Mistral Assist: Reçu '%s' (lang: %s, conv: %s)", text, lang, conv_id)
 
-        api_key = self.hass.data[DOMAIN][self._entry.entry_id]["api_key"]
-        model = self.hass.data[DOMAIN][self._entry.entry_id]["options"].get(
-            "model", "mistral-large-latest"
+        entry_data = self.hass.data.get(DOMAIN, {}).get(self._entry.entry_id, {})
+        api_key = entry_data.get("api_key") or self._entry.data.get("api_key")
+        model = entry_data.get("options", {}).get(
+            "model", self._entry.options.get("model", "mistral-large-latest")
         )
 
         # Contexte domotique
