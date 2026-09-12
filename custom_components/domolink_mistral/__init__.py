@@ -10,6 +10,8 @@ Point d'entrée principal. Gère :
 from __future__ import annotations
 
 import logging
+import os
+import shutil
 from datetime import timedelta
 
 from homeassistant.config_entries import ConfigEntry
@@ -48,6 +50,22 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     # ── Gestionnaire de mise à jour ──
     updater = UpdateManager(hass, entry.entry_id)
+
+    # ── Nettoyage automatique des anciens dossiers de sauvegarde résiduels ──
+    def _cleanup_legacy_backups():
+        try:
+            custom_components_dir = hass.config.path("custom_components")
+            if os.path.exists(custom_components_dir):
+                for item in os.listdir(custom_components_dir):
+                    if item.startswith(f"{DOMAIN}_backup_"):
+                        legacy_path = os.path.join(custom_components_dir, item)
+                        if os.path.isdir(legacy_path):
+                            shutil.rmtree(legacy_path, ignore_errors=True)
+                            _LOGGER.info("DomoLink-Mistral IA: Nettoyage ancien dossier résiduel %s", item)
+        except Exception as err:
+            _LOGGER.debug("DomoLink-Mistral IA: Erreur nettoyage sauvegardes: %s", err)
+
+    await hass.async_add_executor_job(_cleanup_legacy_backups)
 
     # ── Stockage persistant pour les erreurs ignorées ──
     store = Store(hass, STORAGE_VERSION, STORAGE_KEY)

@@ -45,7 +45,7 @@ async def async_setup_entry(
 
     entity = DomolinkMistralUpdateEntity(hass, entry, updater)
     entry_data["update_entity"] = entity
-    async_add_entities([entity], True)
+    async_add_entities([entity], False)
 
 
 class DomolinkMistralUpdateEntity(UpdateEntity):
@@ -164,7 +164,8 @@ class DomolinkMistralUpdateEntity(UpdateEntity):
         """Lance le processus d'installation 1-clic."""
         _LOGGER.info("DomoLink-Mistral IA: Lancement de l'installation depuis l'entité Update...")
         self._attr_in_progress = True
-        self.async_write_ha_state()
+        if self.entity_id is not None:
+            self.async_write_ha_state()
 
         try:
             result = await self._updater.async_install_update(restart_after=True, backup=backup)
@@ -174,7 +175,8 @@ class DomolinkMistralUpdateEntity(UpdateEntity):
             self._attr_installed_version = self._updater.current_version
         finally:
             self._attr_in_progress = False
-            self.async_write_ha_state()
+            if self.entity_id is not None:
+                self.async_write_ha_state()
 
     async def async_update(self) -> None:
         """Rafraîchit l'état depuis GitHub."""
@@ -184,4 +186,5 @@ class DomolinkMistralUpdateEntity(UpdateEntity):
         self._attr_release_url = self._updater.release_url
         self._attr_release_summary = self._updater.changelog
         self._update_sidebar_panel(self._updater.has_update)
-        self.async_write_ha_state()
+        if self.entity_id is not None:
+            self.async_write_ha_state()

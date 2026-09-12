@@ -163,9 +163,9 @@ class DomolinkMistralPanel extends HTMLElement {
       if (!this._updateInfo || this._updateInfo.has_update !== hasUpdate) {
         this._updateInfo = {
           has_update: hasUpdate,
-          current_version: attrs.installed_version || "2.9.7",
-          latest_version: attrs.latest_version || attrs.installed_version || "2.9.7",
-          release_tag: `v${attrs.latest_version || "2.9.7"}`,
+          current_version: attrs.installed_version || "2.9.9",
+          latest_version: attrs.latest_version || attrs.installed_version || "2.9.9",
+          release_tag: `v${attrs.latest_version || "2.9.9"}`,
           release_url: attrs.release_url || "https://github.com/SocrateMobile/DomoLink-Mistral/releases",
           changelog: attrs.release_summary || "Notes de version disponibles sur GitHub.",
           is_updating: attrs.in_progress || false
