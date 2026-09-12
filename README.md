@@ -1,13 +1,20 @@
 # 🧠 DomoLink-Mistral IA pour Home Assistant
 
 [![HACS Compatible](https://img.shields.io/badge/HACS-Custom-blue.svg)](https://github.com/SocrateMobile/DomoLink-Mistral)
-[![Version](https://img.shields.io/badge/version-2.9.2-green.svg)](https://github.com/SocrateMobile/DomoLink-Mistral/releases)
+[![Version](https://img.shields.io/badge/version-2.9.3-green.svg)](https://github.com/SocrateMobile/DomoLink-Mistral/releases)
 
 DomoLink-Mistral IA est une intégration puissante pour Home Assistant qui connecte votre maison intelligente à l'intelligence artificielle **Mistral AI**. Elle agit comme un **assistant de diagnostic, d'automatisation et d'optimisation** pour votre installation domotique.
 
 L'intégration analyse intelligemment vos journaux d'erreurs (`system_log` et `homeassistant.log`), détecte les anomalies, et vous propose des solutions précises pas-à-pas pour les résoudre. Elle peut même appliquer certaines corrections automatiquement après avoir sécurisé votre configuration avec une sauvegarde !
 
 ## ✨ Fonctionnalités
+
+### 🚀 Mises à Jour Automatiques 1-Clic
+- **Pastille latérale dynamique** : Pastille d'alerte rouge `MAJ` injectée sur le menu et l'icône Home Assistant.
+- **Entité native HA `update.domolink_mistral`** : Intégration officielle au centre de mises à jour de Home Assistant.
+- **Bouton d'action et bandeau supérieur** : Affichage instantané dès qu'une release GitHub est publiée.
+- **Modale avec Changelog complet** : Comparateur de versions, notes de release officielles et progression en direct.
+- **Processus 1-clic ultra-sécurisé** : Sauvegarde locale automatique `.bak`, déploiement du ZIP et redémarrage avec reconnexion automatique.
 
 ### 🔍 Détection d'erreurs par l'IA
 - Analyse automatique des logs Home Assistant via Mistral AI

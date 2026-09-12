@@ -126,4 +126,20 @@ generate_daily_briefing:
       selector:
         text:
 
+check_update:
+  name: Check for updates
+  description: Checks GitHub for new releases of DomoLink-Mistral IA.
+
+perform_update:
+  name: Perform 1-click update
+  description: Downloads the latest release, creates a safety backup, and deploys it.
+  fields:
+    restart:
+      name: Restart Home Assistant
+      description: Automatically restart Home Assistant after updating.
+      required: false
+      default: true
+      selector:
+        boolean:
+
 
