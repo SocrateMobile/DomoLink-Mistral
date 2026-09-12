@@ -29,7 +29,7 @@ async def async_setup_entry(
     hass: HomeAssistant, entry: ConfigEntry, async_add_entities
 ) -> None:
     """Configure la plateforme conversation pour DomoLink-Mistral."""
-    async_add_entities([DomoLinkMistralConversationEntity(hass, entry)])
+    async_add_entities([DomoLinkMistralConversationEntity(entry)])
 
 
 class DomoLinkMistralConversationEntity(ConversationEntity):
@@ -39,9 +39,8 @@ class DomoLinkMistralConversationEntity(ConversationEntity):
     _attr_name = "Mistral AI"
     _attr_icon = "mdi:brain"
 
-    def __init__(self, hass: HomeAssistant, entry: ConfigEntry) -> None:
+    def __init__(self, entry: ConfigEntry) -> None:
         """Initialisation."""
-        self.hass = hass
         self._entry = entry
         self._attr_unique_id = f"{entry.entry_id}_conversation"
         self._history = {}

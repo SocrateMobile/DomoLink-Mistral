@@ -43,7 +43,7 @@ async def async_setup_entry(
         updater = UpdateManager(hass, entry.entry_id)
         entry_data["updater"] = updater
 
-    entity = DomolinkMistralUpdateEntity(hass, entry, updater)
+    entity = DomolinkMistralUpdateEntity(entry, updater)
     entry_data["update_entity"] = entity
     async_add_entities([entity], False)
 
@@ -61,9 +61,13 @@ class DomolinkMistralUpdateEntity(UpdateEntity):
         | UpdateEntityFeature.PROGRESS
     )
 
-    def __init__(self, hass: HomeAssistant, entry: ConfigEntry, updater: UpdateManager) -> None:
-        """Initialisation."""
-        self.hass = hass
+    def __init__(self, entry: ConfigEntry, updater: UpdateManager) -> None:
+        """Initialisation.
+
+        IMPORTANT : Ne PAS assigner self.hass ici !
+        HA l'assigne automatiquement dans async_internal_added_to_hass().
+        L'assigner manuellement court-circuite les guards getattr(self, 'hass', None).
+        """
         self._entry = entry
         self._updater = updater
         current_ver = get_installed_version()
@@ -73,17 +77,32 @@ class DomolinkMistralUpdateEntity(UpdateEntity):
         self._attr_release_url = updater.release_url
         self._attr_release_summary = updater.changelog
         self._unsub_interval = None
+        self._ready = False  # True seulement après async_added_to_hass
 
     async def async_added_to_hass(self) -> None:
-        """Enregistre le suivi périodique et effectue une première vérification."""
+        """Enregistre le suivi périodique et effectue une première vérification.
+
+        À ce stade, self.hass et self.entity_id sont GARANTIS par HA.
+        """
         await super().async_added_to_hass()
+        self._ready = True
         self._unsub_interval = async_track_time_interval(
             self.hass, self._async_periodic_check, UPDATE_CHECK_INTERVAL
         )
-        self.hass.async_create_task(self.async_update())
+        # Première vérification différée de 5s pour laisser HA finir le chargement
+        import asyncio
+        self.hass.async_create_task(self._deferred_first_check())
+
+    async def _deferred_first_check(self) -> None:
+        """Première vérification avec délai pour éviter les conflits de chargement."""
+        import asyncio
+        await asyncio.sleep(5)
+        if self._ready:
+            await self.async_update()
 
     async def async_will_remove_from_hass(self) -> None:
         """Nettoyage lors du retrait de l'entité."""
+        self._ready = False
         if self._unsub_interval:
             self._unsub_interval()
             self._unsub_interval = None
@@ -91,7 +110,8 @@ class DomolinkMistralUpdateEntity(UpdateEntity):
 
     async def _async_periodic_check(self, _now=None) -> None:
         """Vérification périodique."""
-        await self.async_update()
+        if self._ready:
+            await self.async_update()
 
     def _update_sidebar_panel(self, has_update: bool) -> None:
         """Met à jour le badge et l'icône dans la barre latérale gauche de HA."""
@@ -186,14 +206,17 @@ class DomolinkMistralUpdateEntity(UpdateEntity):
 
     async def async_update(self) -> None:
         """Rafraîchit l'état depuis GitHub."""
+        if not self._ready:
+            return
         await self._updater.async_check()
         self._attr_installed_version = self._updater.current_version
         self._attr_latest_version = self._updater.latest_version
         self._attr_release_url = self._updater.release_url
         self._attr_release_summary = self._updater.changelog
         self._update_sidebar_panel(self._updater.has_update)
-        if getattr(self, "hass", None) and getattr(self, "entity_id", None):
+        if self._ready and getattr(self, "hass", None) and getattr(self, "entity_id", None):
             try:
                 self.async_write_ha_state()
             except Exception:
                 pass
+
