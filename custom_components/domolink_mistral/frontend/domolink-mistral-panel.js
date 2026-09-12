@@ -78,7 +78,13 @@ class DomolinkMistralPanel extends HTMLElement {
     this._isDragging = false;
   }
 
+  set panel(panel) {
+    this._panel = panel;
+  }
+
   connectedCallback() {
+    this._render();
+
     // Vérification initiale des mises à jour
     setTimeout(() => {
       this._checkUpdate();
@@ -109,13 +115,17 @@ class DomolinkMistralPanel extends HTMLElement {
 
   set hass(hass) {
     this._hass = hass;
-    const changed = this._updateFromSensor();
-    this._checkUpdateFromEntities();
+    try {
+      const changed = this._updateFromSensor();
+      this._checkUpdateFromEntities();
 
-    if (!this._initialized || changed) {
-      this._initialized = true;
-      this._render();
-      this._injectSidebarBadge();
+      if (!this._initialized || changed) {
+        this._initialized = true;
+        this._render();
+        this._injectSidebarBadge();
+      }
+    } catch (err) {
+      console.error("DomoLink-Mistral IA set hass error:", err);
     }
   }
 
@@ -132,9 +142,9 @@ class DomolinkMistralPanel extends HTMLElement {
       if (!this._updateInfo || this._updateInfo.has_update !== hasUpdate) {
         this._updateInfo = {
           has_update: hasUpdate,
-          current_version: attrs.installed_version || "2.9.4",
-          latest_version: attrs.latest_version || attrs.installed_version || "2.9.4",
-          release_tag: `v${attrs.latest_version || "2.9.4"}`,
+          current_version: attrs.installed_version || "2.9.5",
+          latest_version: attrs.latest_version || attrs.installed_version || "2.9.5",
+          release_tag: `v${attrs.latest_version || "2.9.5"}`,
           release_url: attrs.release_url || "https://github.com/SocrateMobile/DomoLink-Mistral/releases",
           changelog: attrs.release_summary || "Notes de version disponibles sur GitHub.",
           is_updating: attrs.in_progress || false
@@ -594,7 +604,7 @@ class DomolinkMistralPanel extends HTMLElement {
             </button>
           ` : ""}
           <button class="btn btn-primary" id="btn-quick-scan" ${this._isAnalyzing ? "disabled" : ""}>
-            ${this._isAnalyzing ? '<span class="spinner"></span>Audit en cours...' : '🔍 Lancer l'Audit'}
+            ${this._isAnalyzing ? '<span class="spinner"></span>Audit en cours...' : "🔍 Lancer l'Audit"}
           </button>
         </div>
       </div>
@@ -854,7 +864,7 @@ class DomolinkMistralPanel extends HTMLElement {
 
         <div style="margin-top: 14px;">
           <button class="btn btn-primary" id="btn-do-generate" ${this._isGenerating ? "disabled" : ""}>
-            ${this._isGenerating ? '<span class="spinner"></span>Génération en cours...' : '✨ Générer l'automation'}
+            ${this._isGenerating ? '<span class="spinner"></span>Génération en cours...' : "✨ Générer l'automation"}
           </button>
         </div>
 
@@ -900,7 +910,7 @@ class DomolinkMistralPanel extends HTMLElement {
   }
 
   _renderVisionTab() {
-    const cameras = this._hass ? Object.keys(this._hass.states).filter(id => id.startsWith("camera.")) : [];
+    const cameras = this._hass && this._hass.states ? Object.keys(this._hass.states).filter(id => id.startsWith("camera.")) : [];
 
     return `
       <div class="card">
@@ -925,7 +935,7 @@ class DomolinkMistralPanel extends HTMLElement {
         </div>
 
         <button class="btn btn-primary" id="btn-do-vision" ${this._isAnalyzingVision ? "disabled" : ""}>
-          ${this._isAnalyzingVision ? '<span class="spinner"></span>Analyse de l'image...' : '📸 Analyser la caméra'}
+          ${this._isAnalyzingVision ? '<span class="spinner"></span>Analyse de l\'image...' : "📸 Analyser la caméra"}
         </button>
 
         ${this._visionResult ? `
