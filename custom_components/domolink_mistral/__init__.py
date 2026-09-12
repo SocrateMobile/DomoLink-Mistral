@@ -682,8 +682,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         _register_sidebar_panel(has_update=res.get("has_update", False))
 
         update_ent = data.get("update_entity")
-        if update_ent:
-            update_ent.async_write_ha_state()
+        if update_ent and getattr(update_ent, "entity_id", None) and getattr(update_ent, "hass", None):
+            try:
+                update_ent.async_write_ha_state()
+            except Exception:
+                pass
 
         hass.bus.async_fire("domolink_mistral_update_status", res)
         return res
@@ -742,8 +745,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 _register_sidebar_panel(has_update=True)
                 hass.bus.async_fire("domolink_mistral_update_available", res)
                 update_ent = hass.data[DOMAIN][entry.entry_id].get("update_entity")
-                if update_ent:
-                    update_ent.async_write_ha_state()
+                if update_ent and getattr(update_ent, "entity_id", None) and getattr(update_ent, "hass", None):
+                    try:
+                        update_ent.async_write_ha_state()
+                    except Exception:
+                        pass
         except Exception as e:
             _LOGGER.debug("DomoLink-Mistral IA: Erreur check MAJ automatique: %s", e)
 

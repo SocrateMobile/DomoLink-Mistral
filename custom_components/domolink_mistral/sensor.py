@@ -75,13 +75,15 @@ class DomolinkMistralSensor(SensorEntity):
     def set_status(self, status: str):
         """Met à jour le statut en direct."""
         self._current_status = status
-        self.async_write_ha_state()
+        if getattr(self, "hass", None) and getattr(self, "entity_id", None):
+            self.async_write_ha_state()
 
     def set_error(self, error_msg: str):
         """Enregistre et diffuse une erreur d'analyse."""
         self._current_status = f"❌ {error_msg}"
         self._last_error = error_msg
-        self.async_write_ha_state()
+        if getattr(self, "hass", None) and getattr(self, "entity_id", None):
+            self.async_write_ha_state()
 
     def update_issues(self, issues: list, ignored_ids: list | None = None):
         """Met à jour les problèmes détectés."""
@@ -93,4 +95,5 @@ class DomolinkMistralSensor(SensorEntity):
         self._last_analysis = datetime.now().isoformat()
         self._last_error = None
         self._current_status = "Analyse terminée"
-        self.async_write_ha_state()
+        if getattr(self, "hass", None) and getattr(self, "entity_id", None):
+            self.async_write_ha_state()
