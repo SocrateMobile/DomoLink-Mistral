@@ -34,6 +34,7 @@ class DomolinkMistralPanel extends HTMLElement {
     this._isGeneratingBriefing = false;
     this._lastAnalysis = null;
     this._currentStatus = "En attente";
+    this._lastError = null;
     this._showIgnored = false;
     this._confirmData = null;
     this._initialized = false;
@@ -104,6 +105,14 @@ class DomolinkMistralPanel extends HTMLElement {
           this._injectSidebarBadge();
         }
       });
+
+      window.addEventListener("domolink_mistral_analysis_error", (e) => {
+        if (e.detail && e.detail.error) {
+          this._lastError = e.detail.error;
+          this._isAnalyzing = false;
+          this._render();
+        }
+      });
     }
   }
 
@@ -142,9 +151,9 @@ class DomolinkMistralPanel extends HTMLElement {
       if (!this._updateInfo || this._updateInfo.has_update !== hasUpdate) {
         this._updateInfo = {
           has_update: hasUpdate,
-          current_version: attrs.installed_version || "2.9.5",
-          latest_version: attrs.latest_version || attrs.installed_version || "2.9.5",
-          release_tag: `v${attrs.latest_version || "2.9.5"}`,
+          current_version: attrs.installed_version || "2.9.6",
+          latest_version: attrs.latest_version || attrs.installed_version || "2.9.6",
+          release_tag: `v${attrs.latest_version || "2.9.6"}`,
           release_url: attrs.release_url || "https://github.com/SocrateMobile/DomoLink-Mistral/releases",
           changelog: attrs.release_summary || "Notes de version disponibles sur GitHub.",
           is_updating: attrs.in_progress || false
@@ -285,12 +294,14 @@ class DomolinkMistralPanel extends HTMLElement {
 
       const newLast = attrs.last_analysis || null;
       const newStatus = attrs.current_status || "En attente";
+      const newLastError = attrs.last_error || null;
       const newIssues = attrs.issues || [];
       const newIgnored = attrs.ignored_issues || [];
 
       const changed = (
         newLast !== this._lastAnalysis ||
         newStatus !== this._currentStatus ||
+        newLastError !== this._lastError ||
         newIssues.length !== this._issues.length ||
         newIgnored.length !== this._ignoredIssues.length
       );
@@ -299,9 +310,10 @@ class DomolinkMistralPanel extends HTMLElement {
       this._ignoredIssues = newIgnored;
       this._lastAnalysis = newLast;
       this._currentStatus = newStatus;
+      this._lastError = newLastError;
 
       // Arrêter les spinners
-      if (this._isAnalyzing && (newStatus.includes("terminée") || newStatus.includes("Erreur") || newStatus.includes("✅"))) {
+      if (this._isAnalyzing && (newStatus.includes("terminée") || newStatus.includes("Erreur") || newStatus.includes("✅") || newStatus.includes("❌") || newStatus.includes("🚫"))) {
         this._isAnalyzing = false;
       }
       if (this._isApplying && !newStatus.startsWith("⏳")) {
@@ -574,6 +586,7 @@ class DomolinkMistralPanel extends HTMLElement {
 
       ${this._renderHeader()}
       ${this._renderUpdateBanner()}
+      ${this._renderErrorBanner()}
       ${this._renderTabs()}
 
       ${this._renderActiveTabContent()}
@@ -584,6 +597,46 @@ class DomolinkMistralPanel extends HTMLElement {
     `;
 
     this._attachEvents();
+  }
+
+  _renderErrorBanner() {
+    if (!this._lastError && !(this._currentStatus && this._currentStatus.startsWith("❌"))) return "";
+    const errorText = this._lastError || this._currentStatus.replace(/^❌\s*/, "");
+    const isRateLimit = errorText.includes("429") || errorText.toLowerCase().includes("too many requests") || errorText.toLowerCase().includes("quota");
+
+    return `
+      <div style="background: linear-gradient(135deg, #c62828, #b71c1c); color: white; padding: 16px 20px; border-radius: 12px; margin-bottom: 20px; box-shadow: 0 4px 15px rgba(198, 40, 40, 0.35); border-left: 6px solid #ffeb3b;">
+        <div style="display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; flex-wrap: wrap;">
+          <div style="display: flex; gap: 12px; align-items: flex-start; flex: 1; min-width: 280px;">
+            <span style="font-size: 1.8em;">${isRateLimit ? "🚫" : "⚠️"}</span>
+            <div>
+              <div style="font-weight: 700; font-size: 1.05em; margin-bottom: 4px;">
+                ${isRateLimit ? "Limite de requêtes Mistral AI atteinte (HTTP 429 : Too Many Requests)" : "Erreur de communication avec Mistral AI"}
+              </div>
+              <div style="font-size: 0.9em; line-height: 1.4; opacity: 0.95;">
+                ${this._escapeHtml(errorText)}
+              </div>
+              ${isRateLimit ? `
+                <div style="margin-top: 10px; font-size: 0.85em; background: rgba(0,0,0,0.25); padding: 8px 12px; border-radius: 6px; line-height: 1.4;">
+                  💡 <strong>Comment résoudre :</strong> Votre palier de requêtes par minute ou vos crédits API sont temporairement épuisés.<br/>
+                  Consultez votre consommation et vos quotas sur <a href="https://console.mistral.ai" target="_blank" rel="noopener" style="color: #ffeb3b; text-decoration: underline; font-weight: bold;">console.mistral.ai</a> ou patientez 1 à 2 minutes avant de relancer l'audit.
+                </div>
+              ` : `
+                <div style="margin-top: 8px; font-size: 0.85em; opacity: 0.9;">
+                  💡 Vérifiez votre connexion internet ou votre clé API dans les paramètres de l'intégration.
+                </div>
+              `}
+            </div>
+          </div>
+          <div style="display: flex; gap: 8px; align-items: center;">
+            <button class="btn btn-warning" id="btn-retry-scan" style="background: white; color: #b71c1c; font-weight: bold;">
+              🔄 Relancer l'Audit
+            </button>
+            <button id="btn-dismiss-error" style="background: none; border: none; color: white; font-size: 1.4em; cursor: pointer; opacity: 0.8;" title="Fermer cette alerte">&times;</button>
+          </div>
+        </div>
+      </div>
+    `;
   }
 
   _renderHeader() {
@@ -1097,10 +1150,33 @@ class DomolinkMistralPanel extends HTMLElement {
   _attachEvents() {
     const root = this.shadowRoot;
 
+    // Error banner retry and dismiss
+    const btnRetry = root.getElementById("btn-retry-scan");
+    if (btnRetry) {
+      btnRetry.addEventListener("click", () => {
+        this._lastError = null;
+        this._isAnalyzing = true;
+        this._render();
+        this._hass.callService("domolink_mistral", "analyze_now", {});
+      });
+    }
+
+    const btnDismiss = root.getElementById("btn-dismiss-error");
+    if (btnDismiss) {
+      btnDismiss.addEventListener("click", () => {
+        this._lastError = null;
+        if (this._currentStatus && this._currentStatus.startsWith("❌")) {
+          this._currentStatus = "En attente";
+        }
+        this._render();
+      });
+    }
+
     // Header Quick Scan
     const btnQuick = root.getElementById("btn-quick-scan");
     if (btnQuick) {
       btnQuick.addEventListener("click", () => {
+        this._lastError = null;
         this._isAnalyzing = true;
         this._render();
         this._hass.callService("domolink_mistral", "analyze_now", {});

@@ -175,6 +175,49 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             result = await analyze_with_mistral(hass, api_key, model, logs)
 
             elapsed = round(time.monotonic() - start_time, 1)
+
+            # ── Vérification des erreurs API (ex: 429 Too Many Requests, 401 Auth) ──
+            if not result.get("success", True) or result.get("error"):
+                error_msg = result.get("error", "Erreur lors de l'appel à Mistral AI.")
+                error_type = result.get("error_type", "unknown")
+                _LOGGER.error("DomoLink-Mistral: Analyse échouée en %ss — %s", elapsed, error_msg)
+
+                if sensor:
+                    sensor.set_error(error_msg)
+
+                if error_type == "rate_limit":
+                    notif_title = "🚫 DomoLink-Mistral — Quota / Limite Dépassée (HTTP 429)"
+                    notif_body = (
+                        f"**Mistral AI a refusé la requête (HTTP 429 : Too Many Requests) :**\n\n"
+                        f"{error_msg}\n\n"
+                        f"💡 **Comment résoudre :**\n"
+                        f"- Votre palier de requêtes par minute est atteint ou vos crédits API sont temporairement épuisés.\n"
+                        f"- Vérifiez vos quotas et votre plan sur le portail officiel [console.mistral.ai](https://console.mistral.ai).\n"
+                        f"- Patientez 1 à 2 minutes avant de relancer l'audit."
+                    )
+                elif error_type == "auth_error":
+                    notif_title = "🔑 DomoLink-Mistral — Clé API Invalide (HTTP 401)"
+                    notif_body = (
+                        f"**Authentification échouée auprès de Mistral AI :**\n\n"
+                        f"{error_msg}\n\n"
+                        f"💡 Rendez-vous dans *Paramètres > Appareils et Services > DomoLink-Mistral IA* pour mettre à jour votre clé API."
+                    )
+                else:
+                    notif_title = "⚠️ DomoLink-Mistral — Erreur d'analyse"
+                    notif_body = f"**L'analyse IA n'a pas pu être finalisée :**\n\n{error_msg}"
+
+                await hass.services.async_call(
+                    "persistent_notification",
+                    "create",
+                    {
+                        "title": notif_title,
+                        "message": notif_body,
+                        "notification_id": "domolink_mistral_alert",
+                    },
+                )
+                hass.bus.async_fire("domolink_mistral_analysis_error", {"error": error_msg, "error_type": error_type})
+                return
+
             _LOGGER.info("DomoLink-Mistral: Réponse Mistral reçue en %ss.", elapsed)
 
             # ── Étape 3 : Traitement des résultats ──
