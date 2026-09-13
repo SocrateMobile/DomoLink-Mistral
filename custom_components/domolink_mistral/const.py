@@ -1,7 +1,7 @@
 """Constantes pour l'intégration Domolink-Mistral."""
 
 DOMAIN = "domolink_mistral"
-VERSION = "2.9.13"
+VERSION = "2.9.14"
 
 CONF_API_KEY = "api_key"
 CONF_MODEL = "model"
@@ -15,7 +15,10 @@ MODE_MANUAL = "manual"
 DEFAULT_MODEL = "mistral-large-latest"
 
 MODELS = [
+    "mistral-large-2411",
     "mistral-large-latest",
+    "pixtral-12b-2409",
+    "ministral-8b-latest",
     "mistral-small-latest",
     "open-mistral-nemo",
 ]
@@ -32,12 +35,11 @@ ALLOWED_FIX_DOMAINS = {
     "input_select", "input_text", "input_datetime",
     "light", "switch", "cover", "fan", "climate", "media_player",
     "scene", "group", "timer", "counter", "number", "select",
-    "button", "text", "date", "time", "notify", "homeassistant",
+    "button", "text", "date", "time", "notify", "homeassistant", "restart_ha",
 }
 
 # Services explicitement interdits (même si le domaine est autorisé)
 BLOCKED_SERVICES = {
-    "homeassistant.restart",
     "homeassistant.stop",
     "hassio.host_shutdown",
     "hassio.host_reboot",

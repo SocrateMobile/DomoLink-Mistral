@@ -716,7 +716,20 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         res = await updater_obj.async_install_update(restart_after=restart_after, backup=backup)
         return res
 
+
+    async def handle_rollback(call: ServiceCall):
+        from .reparator import rollback_latest_fix
+        res = await rollback_latest_fix(hass)
+        if res.get("success"):
+            # Update frontend to trigger a reload or show success
+            hass.bus.async_fire("domolink_mistral_rollback_success", res)
+        else:
+            hass.bus.async_fire("domolink_mistral_rollback_failed", res)
+        return res
+
     # ── Enregistrement des services ──
+    hass.services.async_register(DOMAIN, "rollback_latest_fix", handle_rollback)
+
     hass.services.async_register(DOMAIN, "analyze_now", handle_analyze_now)
     hass.services.async_register(DOMAIN, "apply_fix", handle_apply_fix)
     hass.services.async_register(DOMAIN, "ignore_issue", handle_ignore_issue)
