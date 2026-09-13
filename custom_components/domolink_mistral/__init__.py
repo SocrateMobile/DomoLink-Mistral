@@ -686,23 +686,30 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     async def handle_check_update(call):
         """Service : domolink_mistral.check_update (Vérifie les mises à jour GitHub)."""
-        data = hass.data[DOMAIN][entry.entry_id]
-        updater_obj = data.get("updater")
-        if not updater_obj:
-            return {"has_update": False, "error": "Gestionnaire de mise à jour indisponible"}
+        try:
+            data = hass.data[DOMAIN][entry.entry_id]
+            updater_obj = data.get("updater")
+            if not updater_obj:
+                return {"has_update": False, "error": "Gestionnaire de mise à jour indisponible"}
 
-        res = await updater_obj.async_check()
-        _register_sidebar_panel(has_update=res.get("has_update", False))
+            res = await updater_obj.async_check()
+            _register_sidebar_panel(has_update=res.get("has_update", False))
 
-        update_ent = data.get("update_entity")
-        if update_ent and getattr(update_ent, "entity_id", None) and getattr(update_ent, "hass", None):
-            try:
-                update_ent.async_write_ha_state()
-            except Exception:
-                pass
+            update_ent = data.get("update_entity")
+            if update_ent:
+                # Vérification stricte sans getattr dynamiques pour éviter le plantage
+                if hasattr(update_ent, "hass") and update_ent.hass is not None and hasattr(update_ent, "entity_id") and update_ent.entity_id is not None:
+                    try:
+                        update_ent.async_write_ha_state()
+                    except Exception:
+                        pass
 
-        hass.bus.async_fire("domolink_mistral_update_status", res)
-        return res
+            hass.bus.async_fire("domolink_mistral_update_status", res)
+            return res
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).warning("DomoLink-Mistral IA: Erreur check_update: %s", e)
+            return {"has_update": False, "error": str(e)}
 
     async def handle_perform_update(call):
         """Service : domolink_mistral.perform_update / install_update (Installe la mise à jour GitHub)."""
