@@ -897,11 +897,18 @@ class DomolinkMistralPanel extends HTMLElement {
             </button>
           </div>
 
+
+
           <div style="display: flex; gap: 8px;">
             <button class="btn btn-warning" id="btn-repair-all" ${autoFixCount === 0 || this._isApplying ? "disabled" : ""}>
               ⚡ Corriger Tout (All Auto: ${autoFixCount})
             </button>
+            <button class="btn btn-danger" id="btn-rollback" title="Annuler la dernière modification YAML">
+              ⏪ Rollback
+            </button>
+
             <button class="btn btn-secondary" id="btn-toggle-ignored">
+
               ${this._showIgnored ? "Masquer les ignorés" : `Afficher les ignorés (${this._ignoredIssues.length})`}
             </button>
           </div>

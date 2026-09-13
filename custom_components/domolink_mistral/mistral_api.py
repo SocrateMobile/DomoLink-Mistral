@@ -283,29 +283,16 @@ Génère l'automation correspondante au format JSON structuré."""
             return {"success": True, "data": result}
     except Exception as e:
         _LOGGER.error("DomoLink-Mistral: Erreur lors de la génération d'automation: %s", e)
-        return {"success": False, "error": str(e)}
+        return {"success": False, "response_text": f"Désolé, une erreur est survenue: {e}", "service_calls": []}
 
 
 CONVERSATION_SYSTEM_PROMPT = """Tu es l'assistant vocal et domotique de la maison Home Assistant, propulsé par Mistral AI.
 Tu es serviable, précis, courtois et très concis (tes réponses sont destinées à être lues ou énoncées oralement).
 
-Tu as accès à la liste et à l'état des appareils disponibles dans la maison.
-- Si l'utilisateur demande d'effectuer une action (contrôle de lumières, volets, clim, scènes, etc.), tu dois inclure la liste des appels de services correspondants dans "service_calls".
-- Si l'utilisateur pose une question sur l'état d'un appareil, utilise les données fournies pour répondre précisément.
-- Réponds toujours dans la langue de l'utilisateur.
-
-Format JSON strict obligatoire :
-{{
-  "response_text": "Ta réponse courte et naturelle à l'utilisateur",
-  "service_calls": [
-    {{
-      "domain": "nom_du_domaine",
-      "service": "nom_du_service",
-      "service_data": {{"entity_id": "..."}}
-    }}
-  ]
-}}"""
-
+Tu as accès à la liste et à l'état des appareils disponibles dans la maison via le contexte.
+- Si l'utilisateur demande d'effectuer une action (contrôle de lumières, volets, clim, scènes, etc.), tu dois utiliser l'outil 'call_service' pour l'exécuter.
+- Si l'utilisateur pose une question, réponds simplement avec les informations du contexte.
+- Réponds toujours dans la langue de l'utilisateur."""
 
 async def process_conversation_with_mistral(
     hass: HomeAssistant,
@@ -316,7 +303,7 @@ async def process_conversation_with_mistral(
     entities_context: str,
     language: str = "fr",
 ) -> dict:
-    """Traite une commande vocale ou textuelle de l'utilisateur et retourne la réponse et les actions."""
+    """Traite une commande vocale ou textuelle de l'utilisateur avec Function Calling natif."""
     session = async_get_clientsession(hass)
     headers = {
         "Authorization": f"Bearer {api_key}",
@@ -324,24 +311,40 @@ async def process_conversation_with_mistral(
         "Accept": "application/json",
     }
 
-    # Préparer les messages avec l'historique récent
     messages = [{"role": "system", "content": CONVERSATION_SYSTEM_PROMPT}]
-
-    # Ajouter le contexte des entités dans le premier message ou le message système
     context_msg = f"Contexte de la maison (Appareils et états actuels) :\n{entities_context}\nLangue préférée : {language}"
     messages.append({"role": "user", "content": f"[Données domotiques]\n{context_msg}"})
-    messages.append({"role": "assistant", "content": '{"response_text": "Compris, je suis prêt à vous aider avec votre maison.", "service_calls": []}'})
+    messages.append({"role": "assistant", "content": "Compris, je suis prêt à vous aider avec votre maison."})
 
-    # Ajouter les derniers échanges pour garder la mémoire du dialogue
     for item in history[-6:]:
         messages.append(item)
 
     messages.append({"role": "user", "content": user_text})
 
+    tools = [
+        {
+            "type": "function",
+            "function": {
+                "name": "call_service",
+                "description": "Appelle un service Home Assistant pour contrôler la maison.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "domain": {"type": "string", "description": "Le domaine HA (ex: light, switch, climate, scene)"},
+                        "service": {"type": "string", "description": "Le nom du service (ex: turn_on, turn_off, set_temperature)"},
+                        "service_data": {"type": "object", "description": "Les données du service, contenant obligatoirement entity_id"}
+                    },
+                    "required": ["domain", "service", "service_data"]
+                }
+            }
+        }
+    ]
+
     payload = {
         "model": model,
         "messages": messages,
-        "response_format": {"type": "json_object"},
+        "tools": tools,
+        "tool_choice": "auto",
         "temperature": 0.1,
     }
 
@@ -351,20 +354,31 @@ async def process_conversation_with_mistral(
         ) as response:
             response.raise_for_status()
             data = await response.json()
-            content = data["choices"][0]["message"]["content"]
-            result = _safe_json_loads(content)
+            message_obj = data["choices"][0]["message"]
+            response_text = message_obj.get("content") or ""
+            
+            service_calls = []
+            if "tool_calls" in message_obj and message_obj["tool_calls"]:
+                for tool in message_obj["tool_calls"]:
+                    if tool["function"]["name"] == "call_service":
+                        try:
+                            args = json.loads(tool["function"]["arguments"])
+                            service_calls.append(args)
+                        except Exception as e:
+                            _LOGGER.error("Erreur parsing arguments tool_call: %s", e)
+                            
+                if not response_text:
+                    response_text = "C'est fait !"
+
             return {
                 "success": True,
-                "response_text": result.get("response_text", "D'accord."),
-                "service_calls": result.get("service_calls", []),
+                "response_text": response_text,
+                "service_calls": service_calls,
             }
+
     except Exception as e:
-        _LOGGER.error("DomoLink-Mistral Assist: Erreur conversation Mistral: %s", e)
-        return {
-            "success": False,
-            "response_text": f"Désolé, une erreur est survenue lors de la communication avec Mistral : {e}",
-            "service_calls": [],
-        }
+        _LOGGER.error("DomoLink-Mistral Assist Error: %s", e)
+        return {"success": False, "response_text": f"Désolé, une erreur est survenue: {e}", "service_calls": []}
 
 
 PIXTRAL_DEFAULT_MODEL = "pixtral-12b-2409"
@@ -424,7 +438,7 @@ async def analyze_image_with_pixtral(
             return {"success": True, "data": result}
     except Exception as e:
         _LOGGER.error("DomoLink-Mistral Vision: Erreur analyse image Pixtral: %s", e)
-        return {"success": False, "error": str(e)}
+        return {"success": False, "response_text": f"Désolé, une erreur est survenue: {e}", "service_calls": []}
 
 
 async def generate_daily_briefing_with_mistral(
@@ -483,7 +497,7 @@ Réponds UNIQUEMENT en JSON avec la structure :
             return {"success": True, "data": result}
     except Exception as e:
         _LOGGER.error("DomoLink-Mistral Briefing: Erreur génération briefing: %s", e)
-        return {"success": False, "error": str(e)}
+        return {"success": False, "response_text": f"Désolé, une erreur est survenue: {e}", "service_calls": []}
 
 
 
