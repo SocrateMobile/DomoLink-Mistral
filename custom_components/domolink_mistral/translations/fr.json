@@ -19,6 +19,7 @@
       }
     },
     "error": {
+      "invalid_auth": "Clé API invalide. Vérifiez votre clé sur console.mistral.ai.",
       "auth": "Clé API invalide. Vérifiez votre clé sur console.mistral.ai.",
       "cannot_connect": "Impossible de se connecter à l'API Mistral. Vérifiez votre connexion internet.",
       "unknown": "Erreur inattendue. Consultez les logs pour plus de détails."

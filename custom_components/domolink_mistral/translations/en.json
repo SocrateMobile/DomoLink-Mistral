@@ -18,6 +18,7 @@
       }
     },
     "error": {
+      "invalid_auth": "Invalid API key",
       "auth": "Invalid API key",
       "cannot_connect": "Unable to connect to Mistral",
       "unknown": "Unexpected error"

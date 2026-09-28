@@ -1,7 +1,7 @@
 """Constantes pour l'intégration Domolink-Mistral."""
 
 DOMAIN = "domolink_mistral"
-VERSION = "2.9.21"
+VERSION = "2.9.22"
 
 CONF_API_KEY = "api_key"
 CONF_MODEL = "model"
@@ -30,18 +30,19 @@ SCAN_MODES = {
     MODE_MANUAL: "Manuel (Uniquement à la demande)",
 }
 
-# Liste blanche des domaines autorisés pour l'auto-fix
+# Liste blanche des domaines autorisés pour l'auto-fix (appareils et helpers domestiques)
 ALLOWED_FIX_DOMAINS = {
     "automation", "script", "input_boolean", "input_number",
     "input_select", "input_text", "input_datetime",
     "light", "switch", "cover", "fan", "climate", "media_player",
     "scene", "group", "timer", "counter", "number", "select",
-    "button", "text", "date", "time", "notify", "homeassistant", "restart_ha",
+    "button", "text", "date", "time", "notify",
 }
 
 # Services explicitement interdits (même si le domaine est autorisé)
 BLOCKED_SERVICES = {
     "homeassistant.stop",
+    "homeassistant.restart",
     "hassio.host_shutdown",
     "hassio.host_reboot",
     "hassio.addon_stop",

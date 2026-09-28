@@ -9,19 +9,20 @@ Point d'entrée principal. Gère :
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import shutil
 from datetime import timedelta
 
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import EVENT_HOMEASSISTANT_STARTED
-from homeassistant.core import HomeAssistant, SupportsResponse
+from homeassistant.core import HomeAssistant, ServiceCall, SupportsResponse
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.event import (
     async_call_later,
     async_track_time_interval,
 )
+from homeassistant.helpers.start import async_at_started
 from homeassistant.helpers.storage import Store
 
 from .const import (
@@ -54,41 +55,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # ── Gestionnaire de mise à jour ──
     updater = UpdateManager(hass, entry.entry_id)
 
-    # ── Nettoyage automatique des anciens dossiers de sauvegarde résiduels ──
-    def _cleanup_legacy_backups():
-        try:
-            custom_components_dir = hass.config.path("custom_components")
-            active_dir = os.path.abspath(os.path.dirname(__file__))
-            if os.path.exists(custom_components_dir):
-                for item in os.listdir(custom_components_dir):
-                    item_path = os.path.join(custom_components_dir, item)
-                    # Supprimer tout dossier backup résiduel de domolink_mistral
-                    if not os.path.isdir(item_path):
-                        continue
-                    if os.path.abspath(item_path) == active_dir:
-                        continue  # Ne pas supprimer le dossier actif !
-                    # Patterns de noms de backup connus
-                    is_backup = (
-                        item.startswith(f"{DOMAIN}_backup")
-                        or (item.startswith(DOMAIN) and item != DOMAIN)
-                    )
-                    if is_backup:
-                        shutil.rmtree(item_path, ignore_errors=True)
-                        _LOGGER.warning(
-                            "DomoLink-Mistral IA: Suppression du dossier résiduel '%s' "
-                            "(cause potentielle d'erreurs 'hass is None')", item
-                        )
-        except Exception as err:
-            _LOGGER.debug("DomoLink-Mistral IA: Erreur nettoyage sauvegardes: %s", err)
-
-    await hass.async_add_executor_job(_cleanup_legacy_backups)
-
     # ── Stockage persistant pour les erreurs ignorées ──
     store = Store(hass, STORAGE_VERSION, STORAGE_KEY)
     stored_data = await store.async_load()
     ignored_ids: list[str] = stored_data.get("ignored_ids", []) if stored_data else []
 
     cancel_listeners: list = []
+    analysis_lock = asyncio.Lock()
 
     # ── Migration automatique des anciens modèles invalides ou incompatibles ──
     options = dict(entry.options)
@@ -113,6 +86,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         "ignored_ids": ignored_ids,
         "last_issues": [],  # Cache des derniers résultats bruts de Mistral
         "cancel_listeners": cancel_listeners,  # Pour cleanup au unload
+        "analysis_lock": analysis_lock,
     }
 
     _LOGGER.info(
@@ -186,184 +160,179 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # ═══════════════════════════════════════════════════════
 
     async def _run_analysis():
-        """Logique commune d'analyse utilisée par tous les déclencheurs."""
+        """Logique commune d'analyse utilisée par tous les déclencheurs (protégée par verrou)."""
         from .analyzer import get_recent_logs
         from .mistral_api import analyze_with_mistral
         import time
 
-        sensor = hass.data[DOMAIN][entry.entry_id].get("sensor")
-        start_time = time.monotonic()
+        if analysis_lock.locked():
+            _LOGGER.warning("DomoLink-Mistral: Une analyse est déjà en cours. Requête ignorée.")
+            return
 
-        try:
-            # ── Étape 1 : Collecte des données ──
-            _LOGGER.info("DomoLink-Mistral: ═══ DÉBUT DE L'ANALYSE ═══")
-            if sensor:
-                sensor.set_status("📊 [1/3] Collecte des données système, logs, automations, scripts...")
+        async with analysis_lock:
+            sensor = hass.data[DOMAIN][entry.entry_id].get("sensor")
+            start_time = time.monotonic()
 
-            logs = await get_recent_logs(hass)
-
-            if not logs:
-                _LOGGER.info("DomoLink-Mistral: Aucune donnée à analyser (système sain).")
+            try:
+                # ── Étape 1 : Collecte des données ──
+                _LOGGER.info("DomoLink-Mistral: ═══ DÉBUT DE L'ANALYSE ═══")
                 if sensor:
-                    sensor.update_issues([], hass.data[DOMAIN][entry.entry_id]["ignored_ids"])
-                return
+                    sensor.set_status("📊 [1/3] Collecte des données système, logs, automations, scripts...")
 
-            elapsed = round(time.monotonic() - start_time, 1)
-            _LOGGER.info(
-                "DomoLink-Mistral: Collecte terminée en %ss — %s caractères récupérés.",
-                elapsed, len(logs),
-            )
+                logs = await get_recent_logs(hass)
 
-            # ── Étape 2 : Envoi à Mistral ──
-            api_key = hass.data[DOMAIN][entry.entry_id]["api_key"]
-            model = hass.data[DOMAIN][entry.entry_id]["options"].get(
-                CONF_MODEL, DEFAULT_MODEL
-            )
-            if model == "mistral-large-2411" or (model and model not in MODELS):
-                model = DEFAULT_MODEL
+                if not logs:
+                    _LOGGER.info("DomoLink-Mistral: Aucune donnée à analyser (système sain).")
+                    if sensor:
+                        sensor.update_issues([], hass.data[DOMAIN][entry.entry_id]["ignored_ids"])
+                    return
 
-            if sensor:
-                sensor.set_status(
-                    f"🧠 [2/3] Envoi à Mistral AI ({model})... "
-                    f"({len(logs)} caractères, peut prendre 30-60s)"
+                elapsed = round(time.monotonic() - start_time, 1)
+                _LOGGER.info(
+                    "DomoLink-Mistral: Collecte terminée en %ss — %s caractères récupérés.",
+                    elapsed, len(logs),
                 )
 
-            _LOGGER.info(
-                "DomoLink-Mistral: Envoi de %s caractères à %s...",
-                len(logs), model,
-            )
-
-            result = await analyze_with_mistral(hass, api_key, model, logs)
-
-            elapsed = round(time.monotonic() - start_time, 1)
-
-            # ── Vérification des erreurs API (ex: 429 Too Many Requests, 401 Auth) ──
-            if not result.get("success", True) or result.get("error"):
-                error_msg = result.get("error", "Erreur lors de l'appel à Mistral AI.")
-                error_type = result.get("error_type", "unknown")
-                _LOGGER.error("DomoLink-Mistral: Analyse échouée en %ss — %s", elapsed, error_msg)
+                # ── Étape 2 : Envoi à Mistral ──
+                api_key = hass.data[DOMAIN][entry.entry_id]["api_key"]
+                model = hass.data[DOMAIN][entry.entry_id]["options"].get(
+                    CONF_MODEL, DEFAULT_MODEL
+                )
+                if model == "mistral-large-2411" or (model and model not in MODELS):
+                    model = DEFAULT_MODEL
 
                 if sensor:
-                    sensor.set_error(error_msg)
+                    sensor.set_status(
+                        f"🧠 [2/3] Envoi à Mistral AI ({model})... "
+                        f"({len(logs)} caractères, peut prendre 30-60s)"
+                    )
 
-                if error_type == "rate_limit":
-                    notif_title = "🚫 DomoLink-Mistral — Quota / Limite Dépassée (HTTP 429)"
-                    notif_body = (
-                        f"**Mistral AI a refusé la requête (HTTP 429 : Too Many Requests) :**\n\n"
-                        f"{error_msg}\n\n"
-                        f"💡 **Comment résoudre :**\n"
-                        f"- Votre palier de requêtes par minute est atteint ou vos crédits API sont temporairement épuisés.\n"
-                        f"- Vérifiez vos quotas et votre plan sur le portail officiel [console.mistral.ai](https://console.mistral.ai).\n"
-                        f"- Patientez 1 à 2 minutes avant de relancer l'audit."
+                _LOGGER.info(
+                    "DomoLink-Mistral: Envoi de %s caractères à %s...",
+                    len(logs), model,
+                )
+
+                result = await analyze_with_mistral(hass, api_key, model, logs)
+
+                elapsed = round(time.monotonic() - start_time, 1)
+
+                # ── Vérification des erreurs API (ex: 429 Too Many Requests, 401 Auth) ──
+                if not result.get("success", True) or result.get("error"):
+                    error_msg = result.get("error", "Erreur lors de l'appel à Mistral AI.")
+                    error_type = result.get("error_type", "unknown")
+                    _LOGGER.error("DomoLink-Mistral: Analyse échouée en %ss — %s", elapsed, error_msg)
+
+                    if sensor:
+                        sensor.set_error(error_msg)
+
+                    if error_type == "rate_limit":
+                        notif_title = "🚫 DomoLink-Mistral — Quota / Limite Dépassée (HTTP 429)"
+                        notif_body = (
+                            f"**Mistral AI a refusé la requête (HTTP 429 : Too Many Requests) :**\n\n"
+                            f"{error_msg}\n\n"
+                            f"💡 **Comment résoudre :**\n"
+                            f"- Votre palier de requêtes par minute est atteint ou vos crédits API sont temporairement épuisés.\n"
+                            f"- Vérifiez vos quotas et votre plan sur le portail officiel [console.mistral.ai](https://console.mistral.ai).\n"
+                            f"- Patientez 1 à 2 minutes avant de relancer l'audit."
+                        )
+                    elif error_type == "auth_error":
+                        notif_title = "🔑 DomoLink-Mistral — Clé API Invalide (HTTP 401)"
+                        notif_body = (
+                            f"**Authentification échouée auprès de Mistral AI :**\n\n"
+                            f"{error_msg}\n\n"
+                            f"💡 Rendez-vous dans *Paramètres > Appareils et Services > DomoLink-Mistral IA* pour mettre à jour votre clé API."
+                        )
+                    elif error_type in ("bad_request", "forbidden"):
+                        notif_title = "⚙️ DomoLink-Mistral — Modèle incompatible ou accès refusé"
+                        notif_body = (
+                            f"**Erreur liée au modèle Mistral AI :**\n\n"
+                            f"{error_msg}\n\n"
+                            f"💡 **Solution :**\n"
+                            f"- Rendez-vous dans *Paramètres > Appareils et Services > DomoLink-Mistral IA > Configurer*.\n"
+                            f"- Sélectionnez le modèle recommandé gratuit **open-mistral-nemo** ou **ministral-8b-latest**."
+                        )
+                    else:
+                        notif_title = "⚠️ DomoLink-Mistral — Erreur d'analyse"
+                        notif_body = f"**L'analyse IA n'a pas pu être finalisée :**\n\n{error_msg}"
+
+                    await hass.services.async_call(
+                        "persistent_notification",
+                        "create",
+                        {
+                            "title": notif_title,
+                            "message": notif_body,
+                            "notification_id": "domolink_mistral_alert",
+                        },
                     )
-                elif error_type == "auth_error":
-                    notif_title = "🔑 DomoLink-Mistral — Clé API Invalide (HTTP 401)"
-                    notif_body = (
-                        f"**Authentification échouée auprès de Mistral AI :**\n\n"
-                        f"{error_msg}\n\n"
-                        f"💡 Rendez-vous dans *Paramètres > Appareils et Services > DomoLink-Mistral IA* pour mettre à jour votre clé API."
-                    )
-                elif error_type in ("bad_request", "forbidden"):
-                    notif_title = "⚙️ DomoLink-Mistral — Modèle incompatible ou accès refusé"
-                    notif_body = (
-                        f"**Erreur liée au modèle Mistral AI :**\n\n"
-                        f"{error_msg}\n\n"
-                        f"💡 **Solution :**\n"
-                        f"- Rendez-vous dans *Paramètres > Appareils et Services > DomoLink-Mistral IA > Configurer*.\n"
-                        f"- Sélectionnez le modèle recommandé gratuit **open-mistral-nemo** ou **ministral-8b-latest**."
+                    hass.bus.async_fire("domolink_mistral_analysis_error", {"error": error_msg, "error_type": error_type})
+                    return
+
+                _LOGGER.info("DomoLink-Mistral: Réponse Mistral reçue en %ss.", elapsed)
+
+                # ── Étape 3 : Traitement des résultats ──
+                if sensor:
+                    sensor.set_status("📋 [3/3] Traitement et classement des résultats...")
+
+                issues = result.get("issues", [])
+
+                # Stocker les résultats bruts
+                hass.data[DOMAIN][entry.entry_id]["last_issues"] = issues
+
+                # Mettre à jour le capteur (avec filtre des ignorés)
+                ignored = hass.data[DOMAIN][entry.entry_id]["ignored_ids"]
+                if sensor:
+                    sensor.update_issues(issues, ignored)
+
+                # ── Résumé final ──
+                elapsed = round(time.monotonic() - start_time, 1)
+                high_count = sum(1 for i in issues if i.get("severity") == "high")
+                medium_count = sum(1 for i in issues if i.get("severity") == "medium")
+                low_count = sum(1 for i in issues if i.get("severity") == "low")
+
+                summary = (
+                    f"✅ Analyse terminée en {elapsed}s — "
+                    f"{len(issues)} problème(s) : "
+                    f"🔴 {high_count} critique(s), "
+                    f"🟠 {medium_count} moyen(s), "
+                    f"🟢 {low_count} faible(s)"
+                )
+
+                _LOGGER.info("DomoLink-Mistral: %s", summary)
+
+                if sensor:
+                    sensor.set_status(summary)
+
+                # Notification persistante avec résumé uniquement s'il y a des problèmes détectés
+                if issues:
+                    await hass.services.async_call(
+                        "persistent_notification",
+                        "create",
+                        {
+                            "title": "🧠 DomoLink-Mistral — Analyse terminée",
+                            "message": (
+                                f"**{len(issues)} problème(s)** détecté(s) en {elapsed}s :\n\n"
+                                f"- 🔴 **{high_count}** critique(s)\n"
+                                f"- 🟠 **{medium_count}** moyen(s)\n"
+                                f"- 🟢 **{low_count}** faible(s)\n\n"
+                                "Ouvrez le panneau **Mistral AI** dans la barre latérale."
+                            ),
+                            "notification_id": "domolink_mistral_alert",
+                        },
                     )
                 else:
-                    notif_title = "⚠️ DomoLink-Mistral — Erreur d'analyse"
-                    notif_body = f"**L'analyse IA n'a pas pu être finalisée :**\n\n{error_msg}"
+                    _LOGGER.info("DomoLink-Mistral: Analyse terminée en %ss — aucun problème détecté.", elapsed)
 
-                await hass.services.async_call(
-                    "persistent_notification",
-                    "create",
-                    {
-                        "title": notif_title,
-                        "message": notif_body,
-                        "notification_id": "domolink_mistral_alert",
-                    },
-                )
-                hass.bus.async_fire("domolink_mistral_analysis_error", {"error": error_msg, "error_type": error_type})
-                return
-
-            _LOGGER.info("DomoLink-Mistral: Réponse Mistral reçue en %ss.", elapsed)
-
-            # ── Étape 3 : Traitement des résultats ──
-            if sensor:
-                sensor.set_status("📋 [3/3] Traitement et classement des résultats...")
-
-            issues = result.get("issues", [])
-
-            # Stocker les résultats bruts
-            hass.data[DOMAIN][entry.entry_id]["last_issues"] = issues
-
-            # Mettre à jour le capteur (avec filtre des ignorés)
-            ignored = hass.data[DOMAIN][entry.entry_id]["ignored_ids"]
-            if sensor:
-                sensor.update_issues(issues, ignored)
-
-            # ── Résumé final ──
-            elapsed = round(time.monotonic() - start_time, 1)
-            high_count = sum(1 for i in issues if i.get("severity") == "high")
-            medium_count = sum(1 for i in issues if i.get("severity") == "medium")
-            low_count = sum(1 for i in issues if i.get("severity") == "low")
-
-            summary = (
-                f"✅ Analyse terminée en {elapsed}s — "
-                f"{len(issues)} problème(s) : "
-                f"🔴 {high_count} critique(s), "
-                f"🟠 {medium_count} moyen(s), "
-                f"🟢 {low_count} faible(s)"
-            )
-
-            _LOGGER.info("DomoLink-Mistral: %s", summary)
-
-            if sensor:
-                sensor.set_status(summary)
-
-            # Notification persistante avec résumé
-            if issues:
-                await hass.services.async_call(
-                    "persistent_notification",
-                    "create",
-                    {
-                        "title": "🧠 DomoLink-Mistral — Analyse terminée",
-                        "message": (
-                            f"**{len(issues)} problème(s)** détecté(s) en {elapsed}s :\n\n"
-                            f"- 🔴 **{high_count}** critique(s)\n"
-                            f"- 🟠 **{medium_count}** moyen(s)\n"
-                            f"- 🟢 **{low_count}** faible(s)\n\n"
-                            "Ouvrez le panneau **Mistral AI** dans la barre latérale."
-                        ),
-                        "notification_id": "domolink_mistral_alert",
-                    },
-                )
-            else:
-                await hass.services.async_call(
-                    "persistent_notification",
-                    "create",
-                    {
-                        "title": "🧠 DomoLink-Mistral — Tout est OK !",
-                        "message": (
-                            f"Analyse terminée en {elapsed}s.\n\n"
-                            "✅ Aucun problème détecté. Votre système est sain !"
-                        ),
-                        "notification_id": "domolink_mistral_alert",
-                    },
-                )
-
-        except Exception as e:
-            elapsed = round(time.monotonic() - start_time, 1)
-            error_msg = f"Erreur lors de l'analyse après {elapsed}s : {e}"
-            _LOGGER.error("DomoLink-Mistral: %s", error_msg)
-            if sensor:
-                sensor.set_status(f"❌ {error_msg}")
+            except Exception as e:
+                elapsed = round(time.monotonic() - start_time, 1)
+                error_msg = f"Erreur lors de l'analyse après {elapsed}s : {e}"
+                _LOGGER.error("DomoLink-Mistral: %s", error_msg)
+                if sensor:
+                    sensor.set_status(f"❌ {error_msg}")
 
     async def handle_analyze_now(call):
-        """Service : domolink_mistral.analyze_now"""
-        await _run_analysis()
+        """Service : domolink_mistral.analyze_now (Non bloquant via tâche asynchrone)."""
+        hass.async_create_task(_run_analysis())
+        return {"status": "started"}
 
     async def handle_apply_fix(call):
         """Service : domolink_mistral.apply_fix"""
@@ -530,7 +499,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
         api_key = hass.data[DOMAIN][entry.entry_id]["api_key"]
         model = hass.data[DOMAIN][entry.entry_id]["options"].get(
-            "model", "mistral-large-latest"
+            "model", DEFAULT_MODEL
         )
 
         sensor = hass.data[DOMAIN][entry.entry_id].get("sensor")
@@ -613,14 +582,29 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
         # Cas 2 : Fichier image local
         elif image_path:
+            if not hass.config.is_allowed_path(image_path):
+                _LOGGER.error("DomoLink-Mistral Vision: Chemin d'accès interdit: %s", image_path)
+                return {"success": False, "error": "Chemin de fichier non autorisé"}
+
+            ext = os.path.splitext(image_path)[1].lower()
+            if ext not in (".jpg", ".jpeg", ".png", ".webp"):
+                _LOGGER.error("DomoLink-Mistral Vision: Format non supporté: %s", ext)
+                return {"success": False, "error": "Format d'image non supporté (.jpg, .jpeg, .png, .webp uniquement)"}
+
             def _read_file():
+                if os.path.getsize(image_path) > 10 * 1024 * 1024:
+                    raise ValueError("Fichier trop volumineux (max 10 Mo)")
                 with open(image_path, "rb") as f:
                     return f.read()
 
             try:
                 image_bytes = await hass.async_add_executor_job(_read_file)
-                if image_path.lower().endswith(".png"):
+                if ext == ".png":
                     mime_type = "image/png"
+                elif ext == ".webp":
+                    mime_type = "image/webp"
+                else:
+                    mime_type = "image/jpeg"
             except Exception as e:
                 _LOGGER.error("DomoLink-Mistral Vision: Échec lecture fichier %s: %s", image_path, e)
                 return {"success": False, "error": f"Échec lecture fichier : {e}"}
@@ -653,14 +637,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     async def handle_generate_daily_briefing(call):
         """Service : domolink_mistral.generate_daily_briefing (Briefing matinal/soirée)."""
+        from .analyzer import sanitize_logs
         from .mistral_api import generate_daily_briefing_with_mistral
 
         time_of_day = call.data.get("time_of_day", "auto")
         custom_instruction = call.data.get("custom_instruction", "")
 
         if time_of_day == "auto":
-            import datetime
-            hour = datetime.datetime.now().hour
+            from homeassistant.util import dt as dt_util
+            hour = dt_util.now().hour
             time_of_day = "morning" if hour < 14 else "evening"
 
         # Collecte synthétique des données
@@ -690,14 +675,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         low_batteries = [
             f"{s.attributes.get('friendly_name', s.entity_id)} ({s.state}%)"
             for s in hass.states.async_all("sensor")
-            if s.attributes.get("device_class") == "battery" and s.state.isdigit() and int(s.state) < 20
+            if s.attributes.get("device_class") == "battery" and s.state.replace(".", "", 1).isdigit() and float(s.state) < 20
         ]
         if low_batteries:
             summary_lines.append(f"⚠️ Batteries faibles : {', '.join(low_batteries)}")
 
-        system_data = "\n".join(summary_lines)
+        system_data = sanitize_logs("\n".join(summary_lines))
         api_key = hass.data[DOMAIN][entry.entry_id]["api_key"]
-        model = hass.data[DOMAIN][entry.entry_id]["options"].get("model", "mistral-large-latest")
+        model = hass.data[DOMAIN][entry.entry_id]["options"].get("model", DEFAULT_MODEL)
 
         sensor = hass.data[DOMAIN][entry.entry_id].get("sensor")
         if sensor:
@@ -786,24 +771,24 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         hass, DOMAIN, "install_update", handle_perform_update, supports_response=SupportsResponse.OPTIONAL
     )
 
-    # Services de diagnostic et d'assistance IA
-    hass.services.async_register(DOMAIN, "analyze_now", handle_analyze_now)
-    hass.services.async_register(DOMAIN, "ignore_issue", handle_ignore_issue)
-    hass.services.async_register(DOMAIN, "unignore_issue", handle_unignore_issue)
-    hass.services.async_register(
-        DOMAIN, "generate_automation", handle_generate_automation, supports_response=SupportsResponse.OPTIONAL
+    # Services de diagnostic et d'assistance IA (réservés aux administrateurs pour protéger le quota et les accès système)
+    async_register_admin_service(hass, DOMAIN, "analyze_now", handle_analyze_now)
+    async_register_admin_service(hass, DOMAIN, "ignore_issue", handle_ignore_issue)
+    async_register_admin_service(hass, DOMAIN, "unignore_issue", handle_unignore_issue)
+    async_register_admin_service(
+        hass, DOMAIN, "generate_automation", handle_generate_automation, supports_response=SupportsResponse.OPTIONAL
     )
-    hass.services.async_register(
-        DOMAIN, "analyze_image", handle_analyze_image, supports_response=SupportsResponse.OPTIONAL
+    async_register_admin_service(
+        hass, DOMAIN, "analyze_image", handle_analyze_image, supports_response=SupportsResponse.OPTIONAL
     )
-    hass.services.async_register(
-        DOMAIN, "generate_daily_briefing", handle_generate_daily_briefing, supports_response=SupportsResponse.OPTIONAL
+    async_register_admin_service(
+        hass, DOMAIN, "generate_daily_briefing", handle_generate_daily_briefing, supports_response=SupportsResponse.OPTIONAL
     )
-    hass.services.async_register(
-        DOMAIN, "check_update", handle_check_update, supports_response=SupportsResponse.OPTIONAL
+    async_register_admin_service(
+        hass, DOMAIN, "check_update", handle_check_update, supports_response=SupportsResponse.OPTIONAL
     )
-    hass.services.async_register(
-        DOMAIN, "check_updates", handle_check_update, supports_response=SupportsResponse.OPTIONAL
+    async_register_admin_service(
+        hass, DOMAIN, "check_updates", handle_check_update, supports_response=SupportsResponse.OPTIONAL
     )
 
     # ═══════════════════════════════════════════════════════
@@ -857,15 +842,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     elif scan_mode == MODE_BOOT:
         _LOGGER.info("DomoLink-Mistral: Mode Boot activé — analyse 3 min après démarrage.")
 
-        async def _boot_callback(_event):
+        async def _at_started(hass):
             async def _delayed_analysis(_now):
                 await _run_analysis()
 
             cancel = async_call_later(hass, 180, _delayed_analysis)
             cancel_listeners.append(cancel)
 
-        unsub = hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STARTED, _boot_callback)
-        cancel_listeners.append(unsub)
+        cancel_started = async_at_started(hass, _at_started)
+        cancel_listeners.append(cancel_started)
 
     else:
         _LOGGER.info("DomoLink-Mistral: Mode Manuel — analyse uniquement à la demande.")
@@ -908,7 +893,10 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         "analyze_image",
         "generate_daily_briefing",
         "check_update",
+        "check_updates",
         "perform_update",
+        "install_update",
+        "rollback_latest_fix",
     ]:
         hass.services.async_remove(DOMAIN, service_name)
 

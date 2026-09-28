@@ -130,6 +130,10 @@ check_update:
   name: Check for updates
   description: Checks GitHub for new releases of DomoLink-Mistral IA.
 
+check_updates:
+  name: Check for updates (alias)
+  description: Checks GitHub for new releases of DomoLink-Mistral IA.
+
 perform_update:
   name: Perform 1-click update
   description: Downloads the latest release, creates a safety backup, and deploys it.
@@ -141,5 +145,22 @@ perform_update:
       default: true
       selector:
         boolean:
+
+install_update:
+  name: Install update
+  description: Downloads and installs the latest DomoLink-Mistral IA release.
+  fields:
+    restart:
+      name: Restart Home Assistant
+      description: Automatically restart Home Assistant after updating.
+      required: false
+      default: true
+      selector:
+        boolean:
+
+rollback_latest_fix:
+  name: Rollback latest fix
+  description: Restores the latest YAML backup made before an automatic fix.
+
 
 

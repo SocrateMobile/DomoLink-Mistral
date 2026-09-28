@@ -385,14 +385,14 @@ Génère l'automation correspondante au format JSON structuré."""
                     pass
                 raw_msg = err_data.get("message") if isinstance(err_data, dict) else (response.reason or "")
                 err_info = _format_mistral_http_error(response.status, raw_msg)
-                return {"success": False, "response_text": err_info["user_msg"], "service_calls": []}
+                return {"success": False, "error": err_info["user_msg"], "response_text": err_info["user_msg"], "service_calls": []}
             data = await response.json()
             content = data["choices"][0]["message"]["content"]
             result = _safe_json_loads(content)
             return {"success": True, "data": result}
     except Exception as e:
         _LOGGER.error("DomoLink-Mistral: Erreur lors de la génération d'automation: %s", e)
-        return {"success": False, "response_text": f"Désolé, une erreur est survenue: {e}", "service_calls": []}
+        return {"success": False, "error": str(e), "response_text": f"Désolé, une erreur est survenue: {e}", "service_calls": []}
 
 
 CONVERSATION_SYSTEM_PROMPT = """Tu es l'assistant vocal et domotique de la maison Home Assistant, propulsé par Mistral AI.
@@ -557,14 +557,14 @@ async def analyze_image_with_pixtral(
                     pass
                 raw_msg = err_data.get("message") if isinstance(err_data, dict) else (response.reason or "")
                 err_info = _format_mistral_http_error(response.status, raw_msg)
-                return {"success": False, "response_text": err_info["user_msg"], "service_calls": []}
+                return {"success": False, "error": err_info["user_msg"], "response_text": err_info["user_msg"]}
             data = await response.json()
             content = data["choices"][0]["message"]["content"]
             result = _safe_json_loads(content)
             return {"success": True, "data": result}
     except Exception as e:
         _LOGGER.error("DomoLink-Mistral Vision: Erreur analyse image Pixtral: %s", e)
-        return {"success": False, "response_text": f"Désolé, une erreur est survenue: {e}", "service_calls": []}
+        return {"success": False, "error": str(e), "response_text": f"Désolé, une erreur est survenue: {e}"}
 
 
 async def generate_daily_briefing_with_mistral(
@@ -625,14 +625,14 @@ Réponds UNIQUEMENT en JSON avec la structure :
                     pass
                 raw_msg = err_data.get("message") if isinstance(err_data, dict) else (response.reason or "")
                 err_info = _format_mistral_http_error(response.status, raw_msg)
-                return {"success": False, "response_text": err_info["user_msg"], "service_calls": []}
+                return {"success": False, "error": err_info["user_msg"], "response_text": err_info["user_msg"]}
             data = await response.json()
             content = data["choices"][0]["message"]["content"]
             result = _safe_json_loads(content)
             return {"success": True, "data": result}
     except Exception as e:
         _LOGGER.error("DomoLink-Mistral Briefing: Erreur génération briefing: %s", e)
-        return {"success": False, "response_text": f"Désolé, une erreur est survenue: {e}", "service_calls": []}
+        return {"success": False, "error": str(e), "response_text": f"Désolé, une erreur est survenue: {e}"}
 
 
 

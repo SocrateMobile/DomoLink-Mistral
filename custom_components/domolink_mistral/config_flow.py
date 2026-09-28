@@ -33,14 +33,22 @@ _LOGGER = logging.getLogger(__name__)
 
 
 async def validate_api_key(hass: HomeAssistant, api_key: str) -> None:
-    """Valide la clé API en faisant un appel réel à l'API Mistral."""
-    from .mistral_api import validate_api_key as _validate
+    """Valide la clé API en faisant un appel direct avec timeout court (15s)."""
+    from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
+    session = async_get_clientsession(hass)
+    headers = {"Authorization": f"Bearer {api_key}"}
     try:
-        is_valid = await _validate(hass, api_key)
-        if not is_valid:
-            raise InvalidAuth
-    except aiohttp.ClientError:
+        async with session.get(
+            "https://api.mistral.ai/v1/models",
+            headers=headers,
+            timeout=aiohttp.ClientTimeout(total=15),
+        ) as response:
+            if response.status in (401, 403):
+                raise InvalidAuth
+            elif response.status != 200:
+                raise CannotConnect
+    except (aiohttp.ClientError, TimeoutError):
         raise CannotConnect
 
 
@@ -59,6 +67,9 @@ class DomolinkMistralConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         """Étape 1 : Saisie de la clé API."""
         errors: dict[str, str] = {}
 
+        await self.async_set_unique_id("domolink_mistral")
+        self._abort_if_unique_id_configured()
+
         if user_input is not None:
             try:
                 api_key = user_input[CONF_API_KEY].strip()
@@ -70,7 +81,7 @@ class DomolinkMistralConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 return await self.async_step_settings()
 
             except InvalidAuth:
-                errors["base"] = "auth"
+                errors["base"] = "invalid_auth"
             except CannotConnect:
                 errors["base"] = "cannot_connect"
             except Exception:
