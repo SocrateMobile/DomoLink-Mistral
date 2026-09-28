@@ -110,19 +110,35 @@ def _apply_yaml_file_fix(hass: HomeAssistant, file_rel_path: str, find_text: str
     if not os.path.exists(target_path) and new_content is None:
         return {"success": False, "reason": f"Fichier introuvable: {file_rel_path}"}
 
+    # Interdire le remplacement intégral sur un fichier existant pour éviter tout écrasement accidentel
+    if os.path.exists(target_path) and not find_text:
+        _LOGGER.error("DomoLink-Mistral: Remplacement intégral interdit pour le fichier existant %s", file_rel_path)
+        return {
+            "success": False,
+            "reason": "Remplacement intégral interdit sur un fichier existant (seul le remplacement ciblé find/replace unique est autorisé)",
+        }
+
     # 1. Calcul du nouveau contenu
     try:
-        if new_content is not None:
+        if not os.path.exists(target_path) and new_content is not None:
             updated = new_content
         else:
             with open(target_path, "r", encoding="utf-8") as f:
                 original = f.read()
 
-            if find_text and find_text in original:
-                # Remplacer uniquement la première occurrence ciblée pour éviter d'altérer d'autres blocs
-                updated = original.replace(find_text, replace_text or "", 1)
-            else:
+            if not find_text or find_text not in original:
                 return {"success": False, "reason": f"Texte cible non trouvé dans {file_rel_path}"}
+
+            occurrences = original.count(find_text)
+            if occurrences > 1:
+                _LOGGER.warning("DomoLink-Mistral: Le texte cible apparaît %s fois dans %s", occurrences, file_rel_path)
+                return {
+                    "success": False,
+                    "reason": f"Texte cible ambigu (trouvé {occurrences} fois dans {file_rel_path}), modification annulée par sécurité",
+                }
+
+            # Remplacement ciblé de l'unique occurrence
+            updated = original.replace(find_text, replace_text or "", 1)
 
         # 2. Validation stricte de la syntaxe YAML avant toute modification ou création de backup
         try:
@@ -245,7 +261,7 @@ async def apply_fix(hass: HomeAssistant, fix_payload) -> dict:
         action_type = action.get("action_type", "")
 
         # ── CAS 1 : Modification de fichier YAML ──
-        if action_type in ("yaml_edit", "yaml_write") or "file" in action:
+        if action_type in ("yaml_edit", "yaml_write") or ("file" in action and "service" not in action and "domain" not in action):
             file_path = action.get("file", "")
             find_txt = action.get("find")
             replace_txt = action.get("replace")

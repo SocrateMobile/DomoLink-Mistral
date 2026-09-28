@@ -18,7 +18,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.intent import IntentResponse, IntentResponseType
 
-from .const import DOMAIN, VERSION
+from .const import DOMAIN, VERSION, DEFAULT_MODEL
 from .mistral_api import process_conversation_with_mistral
 
 _LOGGER = logging.getLogger(__name__)
@@ -80,6 +80,12 @@ async def _run_assist_calls(hass: HomeAssistant, calls: list, context=None) -> N
         data = call.get("service_data") or call.get("data") or {}
         if not isinstance(data, dict):
             data = {}
+
+        # Refuser entity_id 'all' pour éviter les actions globales non désirées
+        target_entity = data.get("entity_id")
+        if target_entity == "all" or target_entity == ["all"]:
+            _LOGGER.warning("DomoLink-Mistral Assist: Appel global sur 'all' refusé par sécurité")
+            continue
 
         # Filtrer toute clé suspecte liée aux fichiers ou à des injections
         safe_data = {
@@ -149,11 +155,19 @@ class DomoLinkMistralConversationEntity(ConversationEntity):
         )
 
     def _get_entities_context(self) -> str:
-        """Collecte l'état compact des principaux appareils pour Mistral."""
+        """Collecte l'état compact des principaux appareils exposés à Assist pour Mistral."""
         relevant_domains = (
             "light", "switch", "cover", "climate", "media_player",
             "fan", "lock", "vacuum", "scene", "script", "binary_sensor", "sensor"
         )
+
+        try:
+            from homeassistant.components.homeassistant.exposed_entities import (
+                async_should_expose,
+            )
+            have_exposed_check = True
+        except ImportError:
+            have_exposed_check = False
 
         lines = [f"Date et heure actuelles : {datetime.now().strftime('%A %d %B %Y %H:%M')}"]
         count = 0
@@ -161,10 +175,16 @@ class DomoLinkMistralConversationEntity(ConversationEntity):
         for state in self.hass.states.async_all():
             domain = state.domain
             if domain in relevant_domains:
+                # Filtrer les entités non exposées à la conversation par l'utilisateur
+                if have_exposed_check and not async_should_expose(
+                    self.hass, conversation.DOMAIN, state.entity_id
+                ):
+                    continue
+
                 name = state.attributes.get("friendly_name", state.entity_id)
                 st = state.state
                 unit = state.attributes.get("unit_of_measurement", "")
-                
+
                 # Ignorer les capteurs de diagnostic trop verbeux
                 if domain == "sensor" and any(x in state.entity_id for x in ("_uptime", "_ip", "_mac", "_version")):
                     continue
@@ -188,7 +208,7 @@ class DomoLinkMistralConversationEntity(ConversationEntity):
         entry_data = self.hass.data.get(DOMAIN, {}).get(self._entry.entry_id, {})
         api_key = entry_data.get("api_key") or self._entry.data.get("api_key")
         model = entry_data.get("options", {}).get(
-            "model", self._entry.options.get("model", "mistral-large-latest")
+            "model", self._entry.options.get("model", DEFAULT_MODEL)
         )
 
         # Contexte domotique

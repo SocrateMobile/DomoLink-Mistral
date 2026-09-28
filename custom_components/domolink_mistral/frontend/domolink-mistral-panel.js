@@ -150,7 +150,7 @@ class DomolinkMistralPanel extends HTMLElement {
     }
   }
 
-  _cleanVersion(v, fallback = "2.9.21") {
+  _cleanVersion(v, fallback = "2.9.22") {
     const s = String(v || fallback).trim().replace(/^[vV]+/, "");
     return s || fallback;
   }
@@ -186,9 +186,10 @@ class DomolinkMistralPanel extends HTMLElement {
   async _checkUpdate() {
     if (!this._hass) return;
     try {
-      const res = await this._hass.callService("domolink_mistral", "check_update", {});
-      if (res && res.response) {
-        this._updateInfo = res.response;
+      const res = await this._hass.callService("domolink_mistral", "check_update", {}, undefined, true);
+      const data = (res && res.response) ? res.response : res;
+      if (data && data.has_update !== undefined) {
+        this._updateInfo = data;
         this._render();
         this._injectSidebarBadge();
       }
@@ -1465,9 +1466,10 @@ class DomolinkMistralPanel extends HTMLElement {
         try {
           const resp = await this._hass.callService("domolink_mistral", "generate_automation", {
             prompt: this._genPrompt
-          });
-          if (resp && resp.response) {
-            this._generatedAutomation = resp.response;
+          }, undefined, true);
+          const data = (resp && resp.response) ? resp.response : resp;
+          if (data && (data.yaml || data.title)) {
+            this._generatedAutomation = data;
           }
         } catch (e) {
           console.error(e);
@@ -1574,9 +1576,10 @@ class DomolinkMistralPanel extends HTMLElement {
           const resp = await this._hass.callService("domolink_mistral", "analyze_image", {
             camera_entity_id: this._selectedCamera,
             prompt: this._visionPrompt
-          });
-          if (resp && resp.response) {
-            this._visionResult = resp.response;
+          }, undefined, true);
+          const data = (resp && resp.response) ? resp.response : resp;
+          if (data) {
+            this._visionResult = data;
           }
         } catch (e) {
           console.error(e);
@@ -1607,9 +1610,10 @@ class DomolinkMistralPanel extends HTMLElement {
           const resp = await this._hass.callService("domolink_mistral", "generate_daily_briefing", {
             time_of_day: this._briefingTimeOfDay,
             custom_instruction: this._briefingCustom
-          });
-          if (resp && resp.response) {
-            this._briefingResult = resp.response;
+          }, undefined, true);
+          const data = (resp && resp.response) ? resp.response : resp;
+          if (data) {
+            this._briefingResult = data;
           }
         } catch (e) {
           console.error(e);

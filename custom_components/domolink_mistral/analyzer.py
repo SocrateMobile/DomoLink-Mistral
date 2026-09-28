@@ -29,7 +29,7 @@ SENSITIVE_PATTERNS = [
         re.compile(
             r'(?i)((?:password|passwd|secret|api_key|api\.key|access_token|'
             r'client_secret|private_key|bearer|wifi_password|auth_token|pin_code|'
-            r'encryption_key|noise_psk|ota_password|wifi_psk|ssid|ap_password)[\s:="\']+)[^\s,\]}"\']+',
+            r'encryption_key|noise_psk|ota_password|wifi_psk|ssid|ap_password)[\s:="\']+)[^\r\n,;\'"]+',
         ),
         r"\1[REDACTED]",
     ),
@@ -40,20 +40,34 @@ SENSITIVE_PATTERNS = [
     ),
     # URLs avec credentials intégrées (user:pass@host)
     (re.compile(r"://[^:\s]+:[^@\s]+@"), "://[CREDENTIALS]@"),
+    # Webhooks Home Assistant
+    (re.compile(r'/api/webhook/[a-zA-Z0-9_-]+'), "/api/webhook/[REDACTED]"),
+    # Tokens bot Telegram (ex: 123456789:ABCdefGhIJKlmNoPQRsTUVwxyZ)
+    (re.compile(r"\b\d{9,10}:[a-zA-Z0-9_-]{35}\b"), "[TELEGRAM_TOKEN_REMOVED]"),
     # Adresses email
     (
         re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b"),
         "[EMAIL_REDACTED]",
+    ),
+    # Adresses IPv4 valides
+    (
+        re.compile(r"\b(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\b"),
+        "[IP_REDACTED]",
     ),
     # Adresses MAC réseau
     (
         re.compile(r"\b(?:[0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}\b"),
         "[MAC_REDACTED]",
     ),
-    # Coordonnées GPS (latitude, longitude avec au moins 4 décimales)
+    # Coordonnées GPS format texte (latitude, longitude avec au moins 4 décimales)
     (
         re.compile(r"\b-?\d{1,2}\.\d{4,8}\s*,\s*-?\d{1,3}\.\d{4,8}\b"),
         "[GPS_REDACTED]",
+    ),
+    # Coordonnées GPS au format JSON ("latitude": 48.8566)
+    (
+        re.compile(r'(?i)("(?:latitude|longitude|lat|lon|lng)"\s*:\s*)[-+]?\d+(?:\.\d+)?'),
+        r'\1"[COORDINATE_REDACTED]"',
     ),
     # Tokens longs type JWT (xxx.yyy.zzz)
     (
