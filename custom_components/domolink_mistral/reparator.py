@@ -97,36 +97,20 @@ def _apply_yaml_file_fix(hass: HomeAssistant, file_rel_path: str, find_text: str
         _LOGGER.error("DomoLink-Mistral: Extension non autorisée: %s", norm_rel)
         return {"success": False, "reason": "Seuls les fichiers .yaml et .yml sont autorisés"}
 
-    # Sécurité 4 : vérifier que le nom de fichier ou sous-dossier est autorisé
+    # Sécurité 4 : vérifier que le fichier est autorisé (whitelist stricte à la racine ou sous-dossiers autorisés)
     is_allowed = (
-        base_name in ALLOWED_YAML_FILES
+        norm_rel in ALLOWED_YAML_FILES
         or norm_rel.startswith("esphome/")
         or norm_rel.startswith("blueprints/")
     )
     if not is_allowed:
-        _LOGGER.error("DomoLink-Mistral: Type de fichier non autorisé pour modification: %s", norm_rel)
-        return {"success": False, "reason": f"Fichier non autorisé: {base_name}"}
+        _LOGGER.error("DomoLink-Mistral: Chemin de fichier non autorisé pour modification: %s", norm_rel)
+        return {"success": False, "reason": f"Fichier non autorisé: {norm_rel}"}
 
     if not os.path.exists(target_path) and new_content is None:
         return {"success": False, "reason": f"Fichier introuvable: {file_rel_path}"}
 
-    # 1. Création d'un backup .bak timestampé
-    if os.path.exists(target_path):
-        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        backup_path = f"{target_path}.{ts}.bak"
-        try:
-            shutil.copy2(target_path, backup_path)
-            _LOGGER.info("DomoLink-Mistral: Backup créé -> %s", backup_path)
-        except Exception as e:
-            return {"success": False, "reason": f"Échec de la sauvegarde préalable: {e}"}
-
-        # Store backup path in hass for rollback
-        if "domolink_mistral_rollbacks" not in hass.data:
-            hass.data["domolink_mistral_rollbacks"] = []
-        hass.data["domolink_mistral_rollbacks"].append({"file": target_path, "backup": backup_path})
-
-
-    # 2. Calcul du nouveau contenu
+    # 1. Calcul du nouveau contenu
     try:
         if new_content is not None:
             updated = new_content
@@ -140,7 +124,7 @@ def _apply_yaml_file_fix(hass: HomeAssistant, file_rel_path: str, find_text: str
             else:
                 return {"success": False, "reason": f"Texte cible non trouvé dans {file_rel_path}"}
 
-        # 3. Validation de syntaxe YAML avant écriture
+        # 2. Validation stricte de la syntaxe YAML avant toute modification ou création de backup
         try:
             import yaml
             class _SafeLoader(yaml.SafeLoader):
@@ -153,13 +137,41 @@ def _apply_yaml_file_fix(hass: HomeAssistant, file_rel_path: str, find_text: str
             _LOGGER.error("DomoLink-Mistral: La modification produirait un YAML invalide: %s", yaml_err)
             return {"success": False, "reason": f"Syntaxe YAML invalide dans le correctif: {yaml_err}"}
 
-        # 4. Écriture atomique sécurisée via fichier temporaire
+        # 3. Création du backup .bak uniquement APRÈS validation YAML réussie
+        orig_mode = None
+        if os.path.exists(target_path):
+            try:
+                orig_mode = os.stat(target_path).st_mode & 0o777
+            except Exception:
+                orig_mode = None
+
+            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+            backup_path = f"{target_path}.{ts}.bak"
+            try:
+                shutil.copy2(target_path, backup_path)
+                _LOGGER.info("DomoLink-Mistral: Backup créé -> %s", backup_path)
+            except Exception as e:
+                return {"success": False, "reason": f"Échec de la sauvegarde préalable: {e}"}
+
+            # Enregistrer pour le rollback
+            if "domolink_mistral_rollbacks" not in hass.data:
+                hass.data["domolink_mistral_rollbacks"] = []
+            hass.data["domolink_mistral_rollbacks"].append({"file": target_path, "backup": backup_path})
+
+        # 4. Écriture atomique sécurisée via fichier temporaire avec préservation des droits chmod
         import tempfile
         dir_name = os.path.dirname(target_path)
         os.makedirs(dir_name, exist_ok=True)
         with tempfile.NamedTemporaryFile("w", dir=dir_name, delete=False, encoding="utf-8") as tf:
             tf.write(updated)
             temp_path = tf.name
+
+        if orig_mode is not None:
+            try:
+                os.chmod(temp_path, orig_mode)
+            except Exception as chmod_err:
+                _LOGGER.debug("DomoLink-Mistral: Impossible d'ajuster les permissions chmod: %s", chmod_err)
+
         os.replace(temp_path, target_path)
 
         _LOGGER.info("DomoLink-Mistral: Fichier %s modifié avec succès.", file_rel_path)

@@ -24,22 +24,43 @@ _LOGGER = logging.getLogger(__name__)
 
 # ── Expressions régulières pour détecter et masquer les données sensibles ──
 SENSITIVE_PATTERNS = [
-    # Mots de passe, clés API, secrets, tokens, identifiants WiFi
+    # Mots de passe, clés API, secrets, tokens, identifiants WiFi, clés ESPHome
     (
         re.compile(
             r'(?i)((?:password|passwd|secret|api_key|api\.key|access_token|'
-            r'client_secret|private_key|bearer|wifi_password|auth_token|pin_code)[\s:="\']+)[^\s,\]}"\']+',
+            r'client_secret|private_key|bearer|wifi_password|auth_token|pin_code|'
+            r'encryption_key|noise_psk|ota_password|wifi_psk|ssid|ap_password)[\s:="\']+)[^\s,\]}"\']+',
         ),
         r"\1[REDACTED]",
     ),
+    # Clés de chiffrement ESPHome / Noise PSK (ex: 32 bytes base64 = 44 chars)
+    (
+        re.compile(r'(?i)(key:\s*["\']?)[A-Za-z0-9+/]{43}=?["\']?'),
+        r"\1[KEY_REDACTED]",
+    ),
     # URLs avec credentials intégrées (user:pass@host)
     (re.compile(r"://[^:\s]+:[^@\s]+@"), "://[CREDENTIALS]@"),
+    # Adresses email
+    (
+        re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b"),
+        "[EMAIL_REDACTED]",
+    ),
+    # Adresses MAC réseau
+    (
+        re.compile(r"\b(?:[0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}\b"),
+        "[MAC_REDACTED]",
+    ),
+    # Coordonnées GPS (latitude, longitude avec au moins 4 décimales)
+    (
+        re.compile(r"\b-?\d{1,2}\.\d{4,8}\s*,\s*-?\d{1,3}\.\d{4,8}\b"),
+        "[GPS_REDACTED]",
+    ),
     # Tokens longs type JWT (xxx.yyy.zzz)
     (
         re.compile(r"\beyJ[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]{10,}\b"),
         "[JWT_TOKEN_REMOVED]",
     ),
-    # Clés API préfixées connues (Mistral, OpenAI, GitHub, etc.)
+    # Clés API préfixées connues (Mistral, OpenAI, GitHub, Anthropic, GitLab, etc.)
     (
         re.compile(r"\b(?:sk-[a-zA-Z0-9]{20,}|ghp_[a-zA-Z0-9]{20,}|glpat-[a-zA-Z0-9_-]{20,})\b"),
         "[API_KEY_REMOVED]",
@@ -439,6 +460,14 @@ async def _get_unavailable_entities(hass: HomeAssistant) -> str:
 
 async def _get_integration_issues(hass: HomeAssistant) -> str:
     """Vérifie l'état des intégrations configurées."""
+    try:
+        from homeassistant.config_entries import ConfigEntryState
+        error_states = {ConfigEntryState.SETUP_ERROR, ConfigEntryState.MIGRATION_ERROR}
+        retry_states = {ConfigEntryState.SETUP_RETRY, ConfigEntryState.NOT_LOADED}
+    except Exception:
+        error_states = set()
+        retry_states = set()
+
     entries = hass.config_entries.async_entries()
     failed = []
     not_loaded = []
@@ -446,11 +475,14 @@ async def _get_integration_issues(hass: HomeAssistant) -> str:
     for entry in entries:
         if getattr(entry, "disabled_by", None):
             continue  # Ne pas signaler les intégrations volontairement désactivées par l'utilisateur
-        state_str = str(entry.state)
+
+        state = getattr(entry, "state", None)
+        state_str = str(state)
         state_lower = state_str.lower()
-        if "error" in state_lower or "failed" in state_lower:
+
+        if state in error_states or "error" in state_lower or "failed" in state_lower:
             failed.append(f"  🔴 {entry.title} ({entry.domain}) — État: {state_str}")
-        elif "not_loaded" in state_lower or "retry" in state_lower:
+        elif state in retry_states or "not_loaded" in state_lower or "retry" in state_lower:
             not_loaded.append(f"  🟡 {entry.title} ({entry.domain}) — État: {state_str}")
 
     if not failed and not not_loaded:
