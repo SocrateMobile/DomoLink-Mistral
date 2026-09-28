@@ -20,9 +20,90 @@ from homeassistant.helpers.intent import IntentResponse, IntentResponseType
 
 from .const import DOMAIN, VERSION
 from .mistral_api import process_conversation_with_mistral
-from .reparator import apply_fix
 
 _LOGGER = logging.getLogger(__name__)
+
+# Domaines autorisés pour le pilotage vocal/conversationnel (aucun accès fichier/yaml/système)
+ASSIST_ALLOWED_DOMAINS = {
+    "light",
+    "switch",
+    "cover",
+    "climate",
+    "media_player",
+    "fan",
+    "scene",
+    "lock",
+    "vacuum",
+    "button",
+    "input_boolean",
+}
+
+
+async def _run_assist_calls(hass: HomeAssistant, calls: list, context=None) -> None:
+    """Exécute uniquement des actions domotiques courantes sécurisées (sans accès fichiers ni admin)."""
+    if not isinstance(calls, list):
+        return
+
+    for call in calls:
+        if not isinstance(call, dict):
+            continue
+
+        svc = call.get("service")
+        domain = call.get("domain")
+        service = None
+
+        if svc and "." in svc:
+            parts = svc.split(".", 1)
+            domain = parts[0]
+            service = parts[1]
+        elif svc and domain:
+            service = svc
+        elif call.get("action"):
+            act = call.get("action")
+            if "." in act:
+                domain, service = act.split(".", 1)
+
+        if not domain or not service:
+            continue
+
+        domain = str(domain).strip().lower()
+        service = str(service).strip().lower()
+
+        if domain not in ASSIST_ALLOWED_DOMAINS:
+            _LOGGER.warning(
+                "DomoLink-Mistral Assist: Domaine refusé '%s' (seuls les appareils domestiques sont autorisés)",
+                domain,
+            )
+            continue
+
+        # Données de service : interdire les paramètres dangereux
+        data = call.get("service_data") or call.get("data") or {}
+        if not isinstance(data, dict):
+            data = {}
+
+        # Filtrer toute clé suspecte liée aux fichiers ou à des injections
+        safe_data = {
+            k: v
+            for k, v in data.items()
+            if k not in ("file", "path", "content", "filename", "command", "url")
+        }
+
+        try:
+            await hass.services.async_call(
+                domain,
+                service,
+                safe_data,
+                blocking=True,
+                context=context,
+            )
+            _LOGGER.debug("DomoLink-Mistral Assist: Appel réussi %s.%s", domain, service)
+        except Exception as err:
+            _LOGGER.error(
+                "DomoLink-Mistral Assist: Erreur lors de l'appel %s.%s : %s",
+                domain,
+                service,
+                err,
+            )
 
 
 async def async_setup_entry(
@@ -130,10 +211,10 @@ class DomoLinkMistralConversationEntity(ConversationEntity):
         response_text = res.get("response_text", "Je n'ai pas compris votre demande.")
         service_calls = res.get("service_calls", [])
 
-        # Exécution des actions domotiques demandées
+        # Exécution des actions domotiques demandées (strictement isolée du réparateur système)
         if service_calls:
             _LOGGER.info("DomoLink-Mistral Assist: Exécution de %s action(s)", len(service_calls))
-            await apply_fix(self.hass, service_calls)
+            await _run_assist_calls(self.hass, service_calls, context=user_input.context)
 
         # Mémoriser dans l'historique de session
         conv_history.append({"role": "user", "content": text})
