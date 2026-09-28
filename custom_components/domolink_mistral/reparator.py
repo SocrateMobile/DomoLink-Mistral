@@ -65,23 +65,46 @@ def _is_service_allowed(domain: str, service: str) -> bool:
 
 def _apply_yaml_file_fix(hass: HomeAssistant, file_rel_path: str, find_text: str = None, replace_text: str = None, new_content: str = None) -> dict:
     """Modifie un fichier YAML de manière sécurisée avec backup préalable."""
-    config_dir = hass.config.config_dir
-    target_path = os.path.normpath(os.path.join(config_dir, file_rel_path))
+    real_config_dir = os.path.realpath(hass.config.config_dir)
+    target_path = os.path.realpath(os.path.join(real_config_dir, file_rel_path))
 
-    # Sécurité : interdire de sortir du dossier config (path traversal)
-    if not target_path.startswith(config_dir):
-        _LOGGER.error("DomoLink-Mistral: Chemin de fichier non autorisé: %s", file_rel_path)
-        return {"success": False, "reason": "Chemin interdit (en dehors de config)"}
+    # Sécurité 1 : interdire de sortir du dossier config (path traversal)
+    try:
+        common = os.path.commonpath([real_config_dir, target_path])
+        if common != real_config_dir:
+            _LOGGER.error("DomoLink-Mistral: Tentative de path traversal rejetée: %s", file_rel_path)
+            return {"success": False, "reason": "Chemin interdit (en dehors de config)"}
+    except Exception:
+        return {"success": False, "reason": "Chemin invalide"}
 
-    # Sécurité : vérifier que le nom de fichier ou sous-dossier est autorisé
+    # Sécurité 2 : interdire les fichiers et dossiers sensibles (secrets.yaml, .storage, custom_components)
+    norm_rel = os.path.relpath(target_path, real_config_dir).replace("\\", "/")
     base_name = os.path.basename(target_path)
+
+    if (
+        norm_rel == "secrets.yaml"
+        or norm_rel.endswith("/secrets.yaml")
+        or norm_rel.startswith(".storage")
+        or "/.storage" in norm_rel
+        or norm_rel.startswith("custom_components")
+        or "/custom_components" in norm_rel
+    ):
+        _LOGGER.error("DomoLink-Mistral: Accès interdit à un fichier ou dossier sensible: %s", norm_rel)
+        return {"success": False, "reason": "Fichier sensible protégé (modification interdite)"}
+
+    # Sécurité 3 : extensions autorisées (.yaml ou .yml uniquement)
+    if not (norm_rel.endswith(".yaml") or norm_rel.endswith(".yml")):
+        _LOGGER.error("DomoLink-Mistral: Extension non autorisée: %s", norm_rel)
+        return {"success": False, "reason": "Seuls les fichiers .yaml et .yml sont autorisés"}
+
+    # Sécurité 4 : vérifier que le nom de fichier ou sous-dossier est autorisé
     is_allowed = (
         base_name in ALLOWED_YAML_FILES
-        or file_rel_path.startswith("esphome/")
-        or file_rel_path.startswith("blueprints/")
+        or norm_rel.startswith("esphome/")
+        or norm_rel.startswith("blueprints/")
     )
     if not is_allowed:
-        _LOGGER.error("DomoLink-Mistral: Type de fichier non autorisé pour modification: %s", file_rel_path)
+        _LOGGER.error("DomoLink-Mistral: Type de fichier non autorisé pour modification: %s", norm_rel)
         return {"success": False, "reason": f"Fichier non autorisé: {base_name}"}
 
     if not os.path.exists(target_path) and new_content is None:
@@ -130,10 +153,14 @@ def _apply_yaml_file_fix(hass: HomeAssistant, file_rel_path: str, find_text: str
             _LOGGER.error("DomoLink-Mistral: La modification produirait un YAML invalide: %s", yaml_err)
             return {"success": False, "reason": f"Syntaxe YAML invalide dans le correctif: {yaml_err}"}
 
-        # 4. Écriture
-        os.makedirs(os.path.dirname(target_path), exist_ok=True)
-        with open(target_path, "w", encoding="utf-8") as f:
-            f.write(updated)
+        # 4. Écriture atomique sécurisée via fichier temporaire
+        import tempfile
+        dir_name = os.path.dirname(target_path)
+        os.makedirs(dir_name, exist_ok=True)
+        with tempfile.NamedTemporaryFile("w", dir=dir_name, delete=False, encoding="utf-8") as tf:
+            tf.write(updated)
+            temp_path = tf.name
+        os.replace(temp_path, target_path)
 
         _LOGGER.info("DomoLink-Mistral: Fichier %s modifié avec succès.", file_rel_path)
         return {"success": True, "file": file_rel_path}

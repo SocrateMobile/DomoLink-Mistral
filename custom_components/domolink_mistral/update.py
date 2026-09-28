@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 from datetime import timedelta
 import logging
+import os
 from typing import Any
 
 from homeassistant.components import frontend
@@ -134,7 +135,7 @@ class DomolinkMistralUpdateEntity(UpdateEntity):
                         "module_url": f"/domolink_mistral_frontend/domolink-mistral-panel.js?v={ver}&t={mtime}",
                     }
                 },
-                require_admin=False,
+                require_admin=True,
                 update=True,
             )
         except Exception as err:
