@@ -163,9 +163,9 @@ class DomolinkMistralPanel extends HTMLElement {
       if (!this._updateInfo || this._updateInfo.has_update !== hasUpdate) {
         this._updateInfo = {
           has_update: hasUpdate,
-          current_version: attrs.installed_version || "2.9.13",
-          latest_version: attrs.latest_version || attrs.installed_version || "2.9.13",
-          release_tag: `v${attrs.latest_version || "2.9.13"}`,
+          current_version: attrs.installed_version || "2.9.18",
+          latest_version: attrs.latest_version || attrs.installed_version || "2.9.18",
+          release_tag: `v${attrs.latest_version || "2.9.18"}`,
           release_url: attrs.release_url || "https://github.com/SocrateMobile/DomoLink-Mistral/releases",
           changelog: attrs.release_summary || "Notes de version disponibles sur GitHub.",
           is_updating: attrs.in_progress || false
@@ -715,7 +715,7 @@ class DomolinkMistralPanel extends HTMLElement {
             <h1 id="mistral-title" style="margin: 0; font-size: 1.4em; line-height: 1.2; cursor: pointer;">
               DomoLink-Mistral IA
               <span style="font-size: 0.6em; color: var(--secondary-text-color, #757575); font-weight: normal; margin-left: 8px; vertical-align: middle;">
-                v${this._updateInfo?.current_version || "2.9.13"}
+                v${this._updateInfo?.current_version || "2.9.18"}
               </span>
             </h1>
             <div class="header-info">Dernière analyse : ${this._timeAgo(this._lastAnalysis)}</div>

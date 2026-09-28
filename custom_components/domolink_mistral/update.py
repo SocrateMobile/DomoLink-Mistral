@@ -118,6 +118,10 @@ class DomolinkMistralUpdateEntity(UpdateEntity):
         try:
             title = "DomoLink-Mistral IA 🔴" if has_update else "DomoLink-Mistral IA"
             icon = "mdi:shield-alert" if has_update else "mdi:brain"
+            frontend_dir = os.path.join(os.path.dirname(__file__), "frontend")
+            panel_file = os.path.join(frontend_dir, "domolink-mistral-panel.js")
+            mtime = int(os.path.getmtime(panel_file)) if os.path.exists(panel_file) else 0
+            ver = get_installed_version()
             frontend.async_register_built_in_panel(
                 self.hass,
                 component_name="custom",
@@ -127,7 +131,7 @@ class DomolinkMistralUpdateEntity(UpdateEntity):
                 config={
                     "_panel_custom": {
                         "name": "domolink-mistral-panel",
-                        "module_url": f"/domolink_mistral_frontend/domolink-mistral-panel.js?v={get_installed_version()}",
+                        "module_url": f"/domolink_mistral_frontend/domolink-mistral-panel.js?v={ver}&t={mtime}",
                     }
                 },
                 require_admin=False,

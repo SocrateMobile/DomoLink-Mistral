@@ -18,16 +18,76 @@ API_TIMEOUT = aiohttp.ClientTimeout(total=120)
 
 
 def _safe_json_loads(content: str) -> dict:
-    """Nettoie et parse de manière robuste une réponse JSON de Mistral."""
+    """Nettoie et parse de manière ultra-robuste une réponse JSON de Mistral."""
     if not content:
         return {}
+
     cleaned = content.strip()
-    # Supprimer les balises ```json ou ``` éventuelles
-    if cleaned.startswith("```"):
-        cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned, flags=re.IGNORECASE)
-        cleaned = re.sub(r"\s*```$", "", cleaned)
-    cleaned = cleaned.strip()
-    return json.loads(cleaned)
+
+    # 1. Tentative directe
+    try:
+        res = json.loads(cleaned, strict=False)
+        if isinstance(res, dict):
+            return res
+        if isinstance(res, list):
+            return {"issues": res}
+    except Exception:
+        pass
+
+    # 2. Extraction d'un bloc markdown ```json ... ``` n'importe où dans le texte
+    md_match = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", cleaned, flags=re.IGNORECASE)
+    if md_match:
+        candidate = md_match.group(1).strip()
+        try:
+            res = json.loads(candidate, strict=False)
+            if isinstance(res, dict):
+                return res
+            if isinstance(res, list):
+                return {"issues": res}
+        except Exception:
+            pass
+
+    # 3. Extraction entre la première accolade '{' et la dernière '}'
+    first_brace = cleaned.find("{")
+    last_brace = cleaned.rfind("}")
+    if first_brace != -1 and last_brace > first_brace:
+        candidate = cleaned[first_brace : last_brace + 1].strip()
+        try:
+            res = json.loads(candidate, strict=False)
+            if isinstance(res, dict):
+                return res
+        except Exception:
+            # Nettoyage des virgules orphelines avant les fermetures ] ou }
+            fixed = re.sub(r",\s*([}\]])", r"\1", candidate)
+            try:
+                res = json.loads(fixed, strict=False)
+                if isinstance(res, dict):
+                    return res
+            except Exception:
+                pass
+
+    # 4. Tentative de sauvetage en cas de JSON tronqué (accolades/crochets non fermés)
+    if first_brace != -1:
+        truncated_candidate = cleaned[first_brace:].strip()
+        # Enlever les balises markdown de fin si présentes
+        truncated_candidate = re.sub(r"```.*$", "", truncated_candidate, flags=re.DOTALL).strip()
+        open_braces = truncated_candidate.count("{") - truncated_candidate.count("}")
+        open_brackets = truncated_candidate.count("[") - truncated_candidate.count("]")
+        repaired = truncated_candidate
+        if repaired.endswith(","):
+            repaired = repaired[:-1]
+        repaired += ("]" * max(0, open_brackets)) + ("}" * max(0, open_braces))
+        try:
+            res = json.loads(repaired, strict=False)
+            if isinstance(res, dict):
+                _LOGGER.warning("DomoLink-Mistral: Réponse JSON tronquée réparée avec succès.")
+                return res
+        except Exception:
+            pass
+
+    # 5. En cas d'échec total, lever une erreur explicite avec le début de la réponse pour le débug
+    snippet = cleaned[:200] if len(cleaned) > 200 else cleaned
+    raise json.JSONDecodeError(f"Contenu non convertible en JSON (extrait: '{snippet}')", cleaned, 0)
 
 SYSTEM_PROMPT = """Tu es un expert senior en domotique, en Home Assistant et en ESPHome.
 Tu analyses un diagnostic approfondi d'une instance Home Assistant contenant :
@@ -171,6 +231,7 @@ async def analyze_with_mistral(
         ],
         "response_format": {"type": "json_object"},
         "temperature": 0.1,
+        "max_tokens": 8192,
     }
 
     try:
@@ -309,6 +370,7 @@ Génère l'automation correspondante au format JSON structuré."""
         ],
         "response_format": {"type": "json_object"},
         "temperature": 0.2,
+        "max_tokens": 4096,
     }
 
     try:
@@ -480,6 +542,7 @@ async def analyze_image_with_pixtral(
         ],
         "response_format": {"type": "json_object"},
         "temperature": 0.1,
+        "max_tokens": 4096,
     }
 
     try:
@@ -547,6 +610,7 @@ Réponds UNIQUEMENT en JSON avec la structure :
         ],
         "response_format": {"type": "json_object"},
         "temperature": 0.3,
+        "max_tokens": 4096,
     }
 
     try:

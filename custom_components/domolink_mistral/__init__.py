@@ -123,12 +123,17 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     )
 
     # ── Enregistrement du panneau frontend (sidebar) ──
-    from homeassistant.components.http import StaticPathConfig
+    try:
+        from homeassistant.components.http import StaticPathConfig
+        have_static_path_config = True
+    except ImportError:
+        have_static_path_config = False
+
     from homeassistant.components.frontend import async_register_built_in_panel
     import os
 
     frontend_dir = os.path.join(os.path.dirname(__file__), "frontend")
-    if hasattr(hass.http, "async_register_static_paths"):
+    if hasattr(hass.http, "async_register_static_paths") and have_static_path_config:
         await hass.http.async_register_static_paths(
             [
                 StaticPathConfig(
@@ -145,9 +150,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             cache_headers=False,
         )
 
+    panel_file = os.path.join(frontend_dir, "domolink-mistral-panel.js")
+    mtime = int(os.path.getmtime(panel_file)) if os.path.exists(panel_file) else 0
+
     def _register_sidebar_panel(has_update: bool = False):
         title = "DomoLink-Mistral IA 🔴" if has_update else "DomoLink-Mistral IA"
         icon = "mdi:shield-alert" if has_update else "mdi:brain"
+        ver = get_installed_version()
         try:
             async_register_built_in_panel(
                 hass,
@@ -158,7 +167,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 config={
                     "_panel_custom": {
                         "name": "domolink-mistral-panel",
-                        "module_url": f"/domolink_mistral_frontend/domolink-mistral-panel.js?v={get_installed_version()}",
+                        "module_url": f"/domolink_mistral_frontend/domolink-mistral-panel.js?v={ver}&t={mtime}",
                     }
                 },
                 require_admin=False,
