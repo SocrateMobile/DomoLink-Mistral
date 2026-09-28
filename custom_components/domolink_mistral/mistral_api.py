@@ -36,10 +36,20 @@ def _safe_json_loads(content: str) -> dict:
     except Exception:
         pass
 
-    # 2. Extraction d'un bloc markdown ```json ... ``` n'importe où dans le texte
-    md_match = re.search(r"```(?:json)?\s*([\s\S]*?)(?:```|$)", cleaned, flags=re.IGNORECASE)
-    if md_match:
-        candidate = md_match.group(1).strip()
+    # 2. Si le texte commence par une balise markdown ```json, on retire uniquement la balise d'en-tête et de fin globale
+    if cleaned.startswith("```"):
+        first_nl = cleaned.find("\n")
+        if first_nl != -1:
+            cleaned = cleaned[first_nl + 1:]
+        if cleaned.endswith("```"):
+            cleaned = cleaned[:-3]
+        cleaned = cleaned.strip()
+
+    # 3. Extraction entre le premier "{" et le dernier "}" de niveau racine
+    first_brace = cleaned.find("{")
+    last_brace = cleaned.rfind("}")
+    if first_brace != -1 and last_brace > first_brace:
+        candidate = cleaned[first_brace : last_brace + 1]
         try:
             res = json.loads(candidate, strict=False)
             if isinstance(res, dict):
@@ -47,10 +57,8 @@ def _safe_json_loads(content: str) -> dict:
             if isinstance(res, list):
                 return {"issues": res}
         except Exception:
-            cleaned = candidate
+            pass
 
-    # 3. Extraction du premier '{'
-    first_brace = cleaned.find("{")
     if first_brace != -1:
         cleaned = cleaned[first_brace:]
 
