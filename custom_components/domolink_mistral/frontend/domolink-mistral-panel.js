@@ -150,22 +150,30 @@ class DomolinkMistralPanel extends HTMLElement {
     }
   }
 
+  _cleanVersion(v, fallback = "2.9.19") {
+    const s = String(v || fallback).trim().replace(/^[vV]+/, "");
+    return s || fallback;
+  }
+
   _checkUpdateFromEntities() {
     if (!this._hass) return;
     const updateEntityId = Object.keys(this._hass.states).find(
-      (id) => id.startsWith("update.") && id.includes("domolink")
+      (id) => id.startsWith("update.") && (id.includes("mistral") || id.includes("domolink_mistral"))
     );
     if (updateEntityId && this._hass.states[updateEntityId]) {
       const stateObj = this._hass.states[updateEntityId];
       const attrs = stateObj.attributes || {};
       const hasUpdate = stateObj.state === "on";
 
-      if (!this._updateInfo || this._updateInfo.has_update !== hasUpdate) {
+      const installed = this._cleanVersion(attrs.installed_version);
+      const latest = this._cleanVersion(attrs.latest_version || attrs.installed_version);
+
+      if (!this._updateInfo || this._updateInfo.has_update !== hasUpdate || this._updateInfo.current_version !== installed) {
         this._updateInfo = {
           has_update: hasUpdate,
-          current_version: attrs.installed_version || "2.9.18",
-          latest_version: attrs.latest_version || attrs.installed_version || "2.9.18",
-          release_tag: `v${attrs.latest_version || "2.9.18"}`,
+          current_version: installed,
+          latest_version: latest,
+          release_tag: `v${latest}`,
           release_url: attrs.release_url || "https://github.com/SocrateMobile/DomoLink-Mistral/releases",
           changelog: attrs.release_summary || "Notes de version disponibles sur GitHub.",
           is_updating: attrs.in_progress || false
@@ -715,7 +723,7 @@ class DomolinkMistralPanel extends HTMLElement {
             <h1 id="mistral-title" style="margin: 0; font-size: 1.4em; line-height: 1.2; cursor: pointer;">
               DomoLink-Mistral IA
               <span style="font-size: 0.6em; color: var(--secondary-text-color, #757575); font-weight: normal; margin-left: 8px; vertical-align: middle;">
-                v${this._updateInfo?.current_version || "2.9.18"}
+                v${this._cleanVersion(this._updateInfo?.current_version)}
               </span>
             </h1>
             <div class="header-info">Dernière analyse : ${this._timeAgo(this._lastAnalysis)}</div>
@@ -724,7 +732,7 @@ class DomolinkMistralPanel extends HTMLElement {
         <div style="display: flex; align-items: center; gap: 10px;">
           ${hasUpdate ? `
             <button class="btn-update-pulse" id="btn-header-update">
-              🚀 Mise à jour ${this._updateInfo.release_tag}
+              🚀 Mise à jour v${this._cleanVersion(this._updateInfo.latest_version)}
             </button>
           ` : ""}
           <button class="btn btn-primary" id="btn-quick-scan" ${this._isAnalyzing ? "disabled" : ""}>
@@ -743,10 +751,10 @@ class DomolinkMistralPanel extends HTMLElement {
           <span style="font-size: 2em;">🚀</span>
           <div>
             <div style="font-weight: 700; font-size: 1.1em; color: #ffeb3b;">
-              Nouvelle version disponible : ${this._updateInfo.release_tag}
+              Nouvelle version disponible : v${this._cleanVersion(this._updateInfo.latest_version)}
             </div>
             <div style="font-size: 0.85em; opacity: 0.95;">
-              Version actuelle : v${this._updateInfo.current_version} &bull; Sauvegarde préalable automatique et déploiement 1-clic.
+              Version actuelle : v${this._cleanVersion(this._updateInfo.current_version)} &bull; Sauvegarde préalable automatique et déploiement 1-clic.
             </div>
           </div>
         </div>
@@ -1132,7 +1140,7 @@ class DomolinkMistralPanel extends HTMLElement {
 
           <div style="background: rgba(3,169,244,0.08); padding: 12px 16px; border-radius: 8px; margin-bottom: 16px; display: flex; justify-content: space-between; align-items: center;">
             <div>
-              <strong>Version installée :</strong> v${this._escapeHtml(this._updateInfo.current_version)}
+              <strong>Version installée :</strong> v${this._cleanVersion(this._escapeHtml(this._updateInfo.current_version))}
             </div>
             <div style="font-size: 1.2em;">➔</div>
             <div>
