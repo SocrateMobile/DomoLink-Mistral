@@ -366,6 +366,18 @@ async def append_automation_to_yaml(hass: HomeAssistant, automation_yaml: str) -
             cleaned = cleaned[:-3]
         cleaned = cleaned.strip()
 
+        # S'assurer que l'automation possède un identifiant 'id' unique pour l'éditeur UI
+        import re
+        import uuid
+        import tempfile
+
+        if not re.search(r"^\s*id\s*:", cleaned, re.MULTILINE):
+            auto_id = f"mistral_{uuid.uuid4().hex[:12]}"
+            if cleaned.startswith("-"):
+                cleaned = f"- id: '{auto_id}'\n  " + cleaned[1:].lstrip()
+            else:
+                cleaned = f"id: '{auto_id}'\n" + cleaned
+
         # S'assurer que le bloc commence par un tiret si c'est une liste
         lines = cleaned.splitlines()
         if lines and not lines[0].strip().startswith("-"):
@@ -399,9 +411,26 @@ async def append_automation_to_yaml(hass: HomeAssistant, automation_yaml: str) -
             _LOGGER.error("DomoLink-Mistral: Erreur syntaxe automation générée: %s", yaml_err)
             return {"success": False, "message": f"YAML invalide : {yaml_err}"}
 
-        # 5. Écriture
-        with open(target_path, "w", encoding="utf-8") as f:
-            f.write(combined)
+        # 5. Écriture atomique sécurisée via fichier temporaire
+        orig_mode = None
+        if os.path.exists(target_path):
+            try:
+                orig_mode = os.stat(target_path).st_mode & 0o777
+            except Exception:
+                orig_mode = None
+
+        dir_name = os.path.dirname(target_path)
+        with tempfile.NamedTemporaryFile("w", dir=dir_name, delete=False, encoding="utf-8") as tf:
+            tf.write(combined)
+            temp_path = tf.name
+
+        if orig_mode is not None:
+            try:
+                os.chmod(temp_path, orig_mode)
+            except Exception:
+                pass
+
+        os.replace(temp_path, target_path)
 
         _LOGGER.info("DomoLink-Mistral: Nouvelle automation ajoutée à %s", target_path)
         return {"success": True, "file": os.path.basename(target_path)}

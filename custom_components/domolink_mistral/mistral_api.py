@@ -10,6 +10,8 @@ import aiohttp
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.core import HomeAssistant
 
+from .analyzer import sanitize_logs
+
 _LOGGER = logging.getLogger(__name__)
 
 MISTRAL_URL = "https://api.mistral.ai/v1/chat/completions"
@@ -350,15 +352,17 @@ async def generate_automation_with_mistral(
             entity_summaries.append(f"- {state.entity_id} ({name})")
 
     # Limiter à 60 entités pour économiser les tokens
-    sample_entities = "\n".join(entity_summaries[:60])
+    sample_entities = sanitize_logs("\n".join(entity_summaries[:60]))
     if len(entity_summaries) > 60:
         sample_entities += f"\n... et {len(entity_summaries) - 60} autres entités"
+
+    clean_prompt = sanitize_logs(user_prompt or "")
 
     user_content = f"""Voici les entités disponibles sur mon Home Assistant :
 {sample_entities}
 
 Demande de l'utilisateur :
-"{user_prompt}"
+"{clean_prompt}"
 
 Génère l'automation correspondante au format JSON structuré."""
 
@@ -517,6 +521,8 @@ async def analyze_image_with_pixtral(
         "Accept": "application/json",
     }
 
+    clean_prompt = sanitize_logs(prompt or "")
+
     system_instruction = (
         "Tu es l'agent de surveillance visuelle de Home Assistant. "
         "Analyse l'image fournie et réponds UNIQUEMENT en JSON avec la structure :\n"
@@ -535,7 +541,7 @@ async def analyze_image_with_pixtral(
             {
                 "role": "user",
                 "content": [
-                    {"type": "text", "text": f"{system_instruction}\n\nQuestion de l'utilisateur : {prompt}"},
+                    {"type": "text", "text": f"{system_instruction}\n\nQuestion de l'utilisateur : {clean_prompt}"},
                     {"type": "image_url", "image_url": f"data:{mime_type};base64,{base64_image}"},
                 ],
             }
@@ -583,13 +589,16 @@ async def generate_daily_briefing_with_mistral(
         "Accept": "application/json",
     }
 
+    clean_data = sanitize_logs(system_data or "")
+    clean_custom = sanitize_logs(custom_instruction or "")
+
     moment_fr = "matin" if time_of_day == "morning" else ("soir" if time_of_day == "evening" else "journée")
 
     prompt = f"""Tu es l'assistant de la maison. Rédige un briefing pour le {moment_fr}.
 Voici les données actuelles de la maison :
-{system_data}
+{clean_data}
 
-{f"Instruction particulière : {custom_instruction}" if custom_instruction else ""}
+{f"Instruction particulière : {clean_custom}" if clean_custom else ""}
 
 Consignes :
 1. Ton texte doit être fluide, bienveillant, naturel et agréable à écouter vocalement.

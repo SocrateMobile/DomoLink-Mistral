@@ -108,9 +108,11 @@ def create_github_release(new_ver: str, release_notes: str, token: str) -> None:
         "make_latest": "true",
     }
 
-    ctx = ssl.create_default_context()
-    ctx.check_hostname = False
-    ctx.verify_mode = ssl.CERT_NONE
+    try:
+        import certifi
+        ctx = ssl.create_default_context(cafile=certifi.where())
+    except ImportError:
+        ctx = ssl.create_default_context()
 
     req = urllib.request.Request(
         url,
@@ -124,9 +126,19 @@ def create_github_release(new_ver: str, release_notes: str, token: str) -> None:
         method="POST",
     )
 
-    with urllib.request.urlopen(req, context=ctx) as resp:
-        res = json.loads(resp.read().decode("utf-8"))
-        print(f"GitHub Release created successfully: {res.get('html_url')}")
+    try:
+        with urllib.request.urlopen(req, context=ctx) as resp:
+            res = json.loads(resp.read().decode("utf-8"))
+            print(f"GitHub Release created successfully: {res.get('html_url')}")
+            return
+    except ssl.SSLError:
+        fallback_ctx = ssl.create_default_context()
+        fallback_ctx.check_hostname = False
+        fallback_ctx.verify_mode = ssl.CERT_NONE
+        with urllib.request.urlopen(req, context=fallback_ctx) as resp:
+            res = json.loads(resp.read().decode("utf-8"))
+            print(f"GitHub Release created successfully: {res.get('html_url')}")
+            return
 
 
 def main() -> None:
@@ -152,7 +164,7 @@ def main() -> None:
     run_cmd(["git", "commit", "-m", f"chore(release): bump version to {tag}"])
     run_cmd(["git", "tag", "-fa", tag, "-m", f"Release {tag}"])
     run_cmd(["git", "tag", "-fa", "latest", "-m", f"Latest release ({tag})"])
-    run_cmd(["git", "push", "origin", "main", "--force"])
+    run_cmd(["git", "push", "origin", "main"])
     run_cmd(["git", "push", "origin", "--tags", "--force"])
 
     # GitHub release

@@ -1,7 +1,7 @@
 # 🧠 DomoLink-Mistral IA pour Home Assistant
 
 [![HACS Compatible](https://img.shields.io/badge/HACS-Custom-blue.svg)](https://github.com/SocrateMobile/DomoLink-Mistral)
-[![Version](https://img.shields.io/badge/version-2.9.17-green.svg)](https://github.com/SocrateMobile/DomoLink-Mistral/releases)
+[![Version](https://img.shields.io/badge/version-2.9.23-green.svg)](https://github.com/SocrateMobile/DomoLink-Mistral/releases)
 
 DomoLink-Mistral IA est une intégration puissante pour Home Assistant qui connecte votre maison intelligente à l'intelligence artificielle **Mistral AI**. Elle agit comme un **assistant de diagnostic, d'automatisation et d'optimisation** pour votre installation domotique.
 
@@ -9,12 +9,11 @@ L'intégration analyse intelligemment vos journaux d'erreurs (`system_log` et `h
 
 ## ✨ Fonctionnalités
 
-### 🚀 Mises à Jour Automatiques 1-Clic
+### 🚀 Mises à Jour Automatiques
 - **Pastille latérale dynamique** : Pastille d'alerte rouge `MAJ` injectée sur le menu et l'icône Home Assistant.
-- **Entité native HA `update.domolink_mistral`** : Intégration officielle au centre de mises à jour de Home Assistant.
+- **Entité native HA `update.domolink_mistral`** : Intégration officielle au centre de mises à jour de Home Assistant (HACS).
 - **Bouton d'action et bandeau supérieur** : Affichage instantané dès qu'une release GitHub est publiée.
 - **Modale avec Changelog complet** : Comparateur de versions, notes de release officielles et progression en direct.
-- **Processus 1-clic ultra-sécurisé** : Sauvegarde locale automatique `.bak`, déploiement du ZIP et redémarrage avec reconnexion automatique.
 
 ### 🔍 Détection d'erreurs par l'IA
 - Analyse automatique des logs Home Assistant via Mistral AI
@@ -29,7 +28,7 @@ L'intégration analyse intelligemment vos journaux d'erreurs (`system_log` et `h
 ### 🎛️ Panneau de résolution interactif
 Un panneau dédié **DomoLink-Mistral IA** dans la barre latérale de Home Assistant avec 6 onglets :
 - **🛡️ Diagnostic & Audit** : analyse globale de santé
-- **🔧 Réparation Sécurisée** : correctifs manuels, automatiques et All Auto
+- **🔧 Réparation Sécurisée** : correctifs manuels et automatiques validés individuellement
 - **✨ Générateur IA** : création d'automations intelligentes en langage naturel
 - **🎙️ Assist Vocal & Écrit** : agent conversationnel officiel HA Assist avec pilotage domotique
 - **👁️ Vision & Caméras** : analyse de sécurité et snapshots avec Pixtral

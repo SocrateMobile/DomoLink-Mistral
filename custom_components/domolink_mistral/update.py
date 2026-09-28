@@ -55,12 +55,8 @@ class DomolinkMistralUpdateEntity(UpdateEntity):
     _attr_has_entity_name = True
     _attr_name = "Mise à jour"
     _attr_title = "DomoLink-Mistral IA"
-    _attr_device_class = UpdateDeviceClass.FIRMWARE
-    _attr_supported_features = (
-        UpdateEntityFeature.INSTALL
-        | UpdateEntityFeature.RELEASE_NOTES
-        | UpdateEntityFeature.PROGRESS
-    )
+    _attr_device_class = None
+    _attr_supported_features = UpdateEntityFeature.RELEASE_NOTES
 
     def __init__(self, entry: ConfigEntry, updater: UpdateManager) -> None:
         """Initialisation.
@@ -169,15 +165,16 @@ class DomolinkMistralUpdateEntity(UpdateEntity):
 
     @property
     def release_summary(self) -> str | None:
-        """Résumé / Notes de version."""
-        return self._updater.changelog
+        """Résumé / Notes de version (plafonné à 255 caractères selon les exigences de Home Assistant)."""
+        if self._updater.changelog:
+            clean = self._updater.changelog.replace("\n", " ").strip()
+            return clean[:255]
+        return None
 
     @property
-    def in_progress(self) -> bool | int | None:
-        """Indicateur de progression pendant l'installation."""
-        if self._updater.is_updating:
-            return self._updater.update_progress
-        return False
+    def in_progress(self) -> bool:
+        """Indicateur booléen d'installation en cours."""
+        return bool(self._updater.is_updating)
 
     async def async_release_notes(self) -> str | None:
         """Renvoie le changelog complet de la release."""
@@ -186,28 +183,8 @@ class DomolinkMistralUpdateEntity(UpdateEntity):
         return self._updater.changelog
 
     async def async_install(self, version: str | None = None, backup: bool = True, **kwargs: Any) -> None:
-        """Lance le processus d'installation 1-clic."""
-        _LOGGER.info("DomoLink-Mistral IA: Lancement de l'installation depuis l'entité Update...")
-        self._attr_in_progress = True
-        if getattr(self, "hass", None) and getattr(self, "entity_id", None):
-            try:
-                self.async_write_ha_state()
-            except Exception:
-                pass
-
-        try:
-            result = await self._updater.async_install_update(restart_after=True, backup=backup)
-            if not result.get("success"):
-                raise HomeAssistantError(result.get("error", "Échec de l'installation"))
-            self._update_sidebar_panel(False)
-            self._attr_installed_version = self._updater.current_version
-        finally:
-            self._attr_in_progress = False
-            if getattr(self, "hass", None) and getattr(self, "entity_id", None):
-                try:
-                    self.async_write_ha_state()
-                except Exception:
-                    pass
+        """Les mises à jour sont gérées de manière sécurisée et native par HACS."""
+        raise HomeAssistantError("Veuillez installer cette mise à jour directement depuis HACS pour garantir la sécurité et l'intégrité de votre système.")
 
     async def async_update(self) -> None:
         """Rafraîchit l'état depuis GitHub."""
