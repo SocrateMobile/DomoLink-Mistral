@@ -22,11 +22,24 @@ MANIFEST_PATH = os.path.join(ROOT_DIR, "custom_components", "domolink_mistral", 
 CONST_PATH = os.path.join(ROOT_DIR, "custom_components", "domolink_mistral", "const.py")
 
 
+PANEL_PATH = os.path.join(
+    ROOT_DIR, "custom_components", "domolink_mistral", "frontend", "domolink-mistral-panel.js"
+)
+
+
 def get_token() -> str:
-    """Retrieve GitHub token from environment or git remote."""
+    """Retrieve GitHub token from environment or osxkeychain or git remote."""
     token = os.environ.get("GITHUB_TOKEN")
     if token:
         return token
+    try:
+        cmd = "printf 'protocol=https\\nhost=github.com\\n' | git credential-osxkeychain get"
+        out = subprocess.check_output(cmd, shell=True, text=True)
+        for line in out.splitlines():
+            if line.startswith("password="):
+                return line.split("=", 1)[1]
+    except Exception:
+        pass
     try:
         remote = (
             subprocess.check_output(
@@ -41,12 +54,12 @@ def get_token() -> str:
             return match.group(1)
     except Exception:
         pass
-    print("Error: GITHUB_TOKEN environment variable is not set.")
+    print("Error: GITHUB_TOKEN environment variable is not set and could not be retrieved.")
     sys.exit(1)
 
 
 def update_version_files(new_ver: str) -> None:
-    """Update version in manifest.json and const.py."""
+    """Update version in manifest.json, const.py, and domolink-mistral-panel.js."""
     # 1. manifest.json
     with open(MANIFEST_PATH, "r", encoding="utf-8") as f:
         data = json.load(f)
@@ -63,6 +76,15 @@ def update_version_files(new_ver: str) -> None:
     with open(CONST_PATH, "w", encoding="utf-8") as f:
         f.write(new_content)
     print(f"Updated {CONST_PATH} -> {new_ver}")
+
+    # 3. domolink-mistral-panel.js
+    if os.path.exists(PANEL_PATH):
+        with open(PANEL_PATH, "r", encoding="utf-8") as f:
+            p_content = f.read()
+        p_content = re.sub(r'fallback\s*=\s*"[^"]+"', f'fallback = "{new_ver}"', p_content)
+        with open(PANEL_PATH, "w", encoding="utf-8") as f:
+            f.write(p_content)
+        print(f"Updated {PANEL_PATH} -> {new_ver}")
 
 
 def run_cmd(cmd: list[str]) -> None:
@@ -87,13 +109,8 @@ def create_github_release(new_ver: str, release_notes: str, token: str) -> None:
     }
 
     ctx = ssl.create_default_context()
-    try:
-        import certifi
-
-        ctx.load_verify_locations(certifi.where())
-    except Exception:
-        ctx.check_hostname = False
-        ctx.verify_mode = ssl.CERT_NONE
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
 
     req = urllib.request.Request(
         url,
@@ -135,7 +152,7 @@ def main() -> None:
     run_cmd(["git", "commit", "-m", f"chore(release): bump version to {tag}"])
     run_cmd(["git", "tag", "-fa", tag, "-m", f"Release {tag}"])
     run_cmd(["git", "tag", "-fa", "latest", "-m", f"Latest release ({tag})"])
-    run_cmd(["git", "push", "origin", "main"])
+    run_cmd(["git", "push", "origin", "main", "--force"])
     run_cmd(["git", "push", "origin", "--tags", "--force"])
 
     # GitHub release
