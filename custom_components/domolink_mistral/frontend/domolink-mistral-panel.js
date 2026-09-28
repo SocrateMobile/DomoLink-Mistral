@@ -205,7 +205,7 @@ class DomolinkMistralPanel extends HTMLElement {
     }
   }
 
-  _cleanVersion(v, fallback = "2.9.25") {
+  _cleanVersion(v, fallback = "2.9.26") {
     const s = String(v || fallback).trim().replace(/^[vV]+/, "");
     return s || fallback;
   }
