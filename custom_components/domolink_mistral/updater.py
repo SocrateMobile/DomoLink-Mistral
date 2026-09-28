@@ -58,15 +58,7 @@ def is_newer_version(latest: str, current: str) -> bool:
 
 
 def get_installed_version() -> str:
-    """Récupère la version installée depuis le manifest.json local ou const."""
-    try:
-        manifest_path = os.path.join(os.path.dirname(__file__), "manifest.json")
-        if os.path.exists(manifest_path):
-            with open(manifest_path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-                return str(data.get("version", VERSION))
-    except Exception as err:
-        _LOGGER.debug("Could not read manifest.json version: %s", err)
+    """Récupère la version installée sans I/O bloquante."""
     return VERSION
 
 

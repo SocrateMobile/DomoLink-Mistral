@@ -19,11 +19,12 @@ from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.intent import IntentResponse, IntentResponseType
 
 from .const import DOMAIN, VERSION, DEFAULT_MODEL
+from .analyzer import sanitize_logs
 from .mistral_api import process_conversation_with_mistral
 
 _LOGGER = logging.getLogger(__name__)
 
-# Domaines autorisés pour le pilotage vocal/conversationnel (aucun accès fichier/yaml/système)
+# Domaines autorisés pour le pilotage vocal/conversationnel (aucun accès critique ou fichier)
 ASSIST_ALLOWED_DOMAINS = {
     "light",
     "switch",
@@ -32,8 +33,6 @@ ASSIST_ALLOWED_DOMAINS = {
     "media_player",
     "fan",
     "scene",
-    "lock",
-    "vacuum",
     "button",
     "input_boolean",
 }
@@ -43,6 +42,14 @@ async def _run_assist_calls(hass: HomeAssistant, calls: list, context=None) -> N
     """Exécute uniquement des actions domotiques courantes sécurisées (sans accès fichiers ni admin)."""
     if not isinstance(calls, list):
         return
+
+    try:
+        from homeassistant.components.homeassistant.exposed_entities import (
+            async_should_expose,
+        )
+        have_exposed_check = True
+    except ImportError:
+        have_exposed_check = False
 
     for call in calls:
         if not isinstance(call, dict):
@@ -71,7 +78,7 @@ async def _run_assist_calls(hass: HomeAssistant, calls: list, context=None) -> N
 
         if domain not in ASSIST_ALLOWED_DOMAINS:
             _LOGGER.warning(
-                "DomoLink-Mistral Assist: Domaine refusé '%s' (seuls les appareils domestiques sont autorisés)",
+                "DomoLink-Mistral Assist: Domaine refusé '%s' (seuls les appareils domestiques autorisés)",
                 domain,
             )
             continue
@@ -86,6 +93,17 @@ async def _run_assist_calls(hass: HomeAssistant, calls: list, context=None) -> N
         if target_entity == "all" or target_entity == ["all"]:
             _LOGGER.warning("DomoLink-Mistral Assist: Appel global sur 'all' refusé par sécurité")
             continue
+
+        # Vérifier que les entités ciblées sont bien exposées à Assist
+        if target_entity and have_exposed_check:
+            entities = [target_entity] if isinstance(target_entity, str) else list(target_entity)
+            unexposed = [e for e in entities if not async_should_expose(hass, conversation.DOMAIN, e)]
+            if unexposed:
+                _LOGGER.warning(
+                    "DomoLink-Mistral Assist: Action refusée sur entité(s) non exposée(s) : %s",
+                    unexposed,
+                )
+                continue
 
         # Filtrer toute clé suspecte liée aux fichiers ou à des injections
         safe_data = {
@@ -195,11 +213,11 @@ class DomoLinkMistralConversationEntity(ConversationEntity):
                 if count >= 80:  # Limiter à 80 entités pour ne pas dépasser le quota
                     break
 
-        return "\n".join(lines)
+        return sanitize_logs("\n".join(lines))
 
     async def async_process(self, user_input: ConversationInput) -> ConversationResult:
         """Traite la demande vocale ou textuelle de l'utilisateur."""
-        text = user_input.text
+        text = sanitize_logs(user_input.text or "")
         conv_id = user_input.conversation_id or "default"
         lang = user_input.language or "fr"
 

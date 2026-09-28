@@ -108,23 +108,47 @@ class DomolinkMistralPanel extends HTMLElement {
       }
     } catch (e) {}
 
-    // Écouter les événements bus HA
-    if (window && window.addEventListener) {
-      window.addEventListener("domolink_mistral_update_event", (e) => {
-        if (e.detail) {
-          this._updateInfo = e.detail;
+  }
+
+  async _subscribeEvents() {
+    if (this._unsubs && this._unsubs.length) {
+      return;
+    }
+    this._unsubs = [];
+    if (!this._hass || !this._hass.connection || !this._hass.connection.subscribeEvents) {
+      return;
+    }
+    try {
+      const unsub1 = await this._hass.connection.subscribeEvents((event) => {
+        if (event && event.data) {
+          this._updateInfo = event.data;
           this._render();
           this._injectSidebarBadge();
         }
-      });
+      }, "domolink_mistral_update_event");
+      this._unsubs.push(unsub1);
 
-      window.addEventListener("domolink_mistral_analysis_error", (e) => {
-        if (e.detail && e.detail.error) {
-          this._lastError = e.detail.error;
+      const unsub2 = await this._hass.connection.subscribeEvents((event) => {
+        if (event && event.data && event.data.error) {
+          this._lastError = event.data.error;
           this._isAnalyzing = false;
           this._render();
         }
-      });
+      }, "domolink_mistral_analysis_error");
+      this._unsubs.push(unsub2);
+    } catch (e) {
+      console.warn("DomoLink-Mistral: Erreur abonnement événements HA bus", e);
+    }
+  }
+
+  _unsubscribeEvents() {
+    if (this._unsubs) {
+      for (const unsub of this._unsubs) {
+        if (typeof unsub === "function") {
+          try { unsub(); } catch (e) {}
+        }
+      }
+      this._unsubs = [];
     }
   }
 
@@ -132,10 +156,41 @@ class DomolinkMistralPanel extends HTMLElement {
     if (this._sidebarInterval) {
       clearInterval(this._sidebarInterval);
     }
+    if (this._sidebarObserver) {
+      this._sidebarObserver.disconnect();
+      this._sidebarObserver = null;
+    }
+    this._unsubscribeEvents();
+  }
+
+  async _callServiceWithResponse(domain, service, serviceData) {
+    if (this._hass && this._hass.callWS) {
+      try {
+        const resp = await this._hass.callWS({
+          type: "call_service",
+          domain: domain,
+          service: service,
+          service_data: serviceData || {},
+          return_response: true,
+        });
+        return (resp && resp.response) ? resp.response : resp;
+      } catch (wsErr) {
+        console.warn(`callWS failed for ${domain}.${service}, fallback to callService:`, wsErr);
+      }
+    }
+    if (this._hass && this._hass.callService) {
+      const resp = await this._hass.callService(domain, service, serviceData || {}, undefined, undefined, true);
+      return (resp && resp.response) ? resp.response : resp;
+    }
+    return null;
   }
 
   set hass(hass) {
+    const isFirst = !this._hass && hass;
     this._hass = hass;
+    if (isFirst) {
+      this._subscribeEvents();
+    }
     try {
       const changed = this._updateFromSensor();
       this._checkUpdateFromEntities();
@@ -150,7 +205,7 @@ class DomolinkMistralPanel extends HTMLElement {
     }
   }
 
-  _cleanVersion(v, fallback = "2.9.22") {
+  _cleanVersion(v, fallback = "2.9.23") {
     const s = String(v || fallback).trim().replace(/^[vV]+/, "");
     return s || fallback;
   }
@@ -186,8 +241,7 @@ class DomolinkMistralPanel extends HTMLElement {
   async _checkUpdate() {
     if (!this._hass) return;
     try {
-      const res = await this._hass.callService("domolink_mistral", "check_update", {}, undefined, true);
-      const data = (res && res.response) ? res.response : res;
+      const data = await this._callServiceWithResponse("domolink_mistral", "check_update", {});
       if (data && data.has_update !== undefined) {
         this._updateInfo = data;
         this._render();
@@ -719,6 +773,9 @@ class DomolinkMistralPanel extends HTMLElement {
     return `
       <div class="header">
         <div style="display: flex; align-items: center; gap: 12px;">
+          ${this.narrow ? `
+            <ha-menu-button id="ha-menu-btn"></ha-menu-button>
+          ` : ""}
           <img src="/domolink_mistral_frontend/icon.png" alt="Logo" style="width: 38px; height: 38px; border-radius: 8px;" />
           <div>
             <h1 id="mistral-title" style="margin: 0; font-size: 1.4em; line-height: 1.2; cursor: pointer;">
@@ -1237,6 +1294,16 @@ class DomolinkMistralPanel extends HTMLElement {
   _attachEvents() {
     const root = this.shadowRoot;
 
+    // Mobile / Narrow sidebar toggle menu button
+    const menuBtn = root.getElementById("ha-menu-btn");
+    if (menuBtn) {
+      menuBtn.hass = this._hass;
+      menuBtn.narrow = this.narrow;
+      menuBtn.addEventListener("click", () => {
+        this.dispatchEvent(new CustomEvent("hass-toggle-menu", { bubbles: true, composed: true }));
+      });
+    }
+
     // Error banner retry and dismiss
     const btnRetry = root.getElementById("btn-retry-scan");
     if (btnRetry) {
@@ -1464,10 +1531,9 @@ class DomolinkMistralPanel extends HTMLElement {
         this._render();
 
         try {
-          const resp = await this._hass.callService("domolink_mistral", "generate_automation", {
+          const data = await this._callServiceWithResponse("domolink_mistral", "generate_automation", {
             prompt: this._genPrompt
-          }, undefined, true);
-          const data = (resp && resp.response) ? resp.response : resp;
+          });
           if (data && (data.yaml || data.title)) {
             this._generatedAutomation = data;
           }
@@ -1573,11 +1639,10 @@ class DomolinkMistralPanel extends HTMLElement {
         this._render();
 
         try {
-          const resp = await this._hass.callService("domolink_mistral", "analyze_image", {
+          const data = await this._callServiceWithResponse("domolink_mistral", "analyze_image", {
             camera_entity_id: this._selectedCamera,
             prompt: this._visionPrompt
-          }, undefined, true);
-          const data = (resp && resp.response) ? resp.response : resp;
+          });
           if (data) {
             this._visionResult = data;
           }
@@ -1607,11 +1672,10 @@ class DomolinkMistralPanel extends HTMLElement {
         this._render();
 
         try {
-          const resp = await this._hass.callService("domolink_mistral", "generate_daily_briefing", {
+          const data = await this._callServiceWithResponse("domolink_mistral", "generate_daily_briefing", {
             time_of_day: this._briefingTimeOfDay,
             custom_instruction: this._briefingCustom
-          }, undefined, true);
-          const data = (resp && resp.response) ? resp.response : resp;
+          });
           if (data) {
             this._briefingResult = data;
           }
