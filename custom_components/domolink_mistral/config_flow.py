@@ -18,6 +18,7 @@ from .const import (
     CONF_MODEL,
     CONF_SCAN_MODE,
     CONF_SCAN_FREQUENCY,
+    DEFAULT_MODEL,
     MODELS,
     SCAN_MODES,
 )
@@ -95,7 +96,7 @@ class DomolinkMistralConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             step_id="settings",
             data_schema=vol.Schema(
                 {
-                    vol.Required(CONF_MODEL, default=MODELS[0]): vol.In(MODELS),
+                    vol.Required(CONF_MODEL, default=DEFAULT_MODEL): vol.In(MODELS),
                     vol.Required(CONF_SCAN_MODE, default="live"): vol.In(
                         list(SCAN_MODES.keys())
                     ),
@@ -129,7 +130,9 @@ class DomolinkMistralOptionsFlowHandler(config_entries.OptionsFlow):
             return self.async_create_entry(title="", data=user_input)
 
         current_options = self.config_entry.options
-        current_model = current_options.get(CONF_MODEL, MODELS[0])
+        current_model = current_options.get(CONF_MODEL, DEFAULT_MODEL)
+        if current_model not in MODELS:
+            current_model = DEFAULT_MODEL
         current_mode = current_options.get(CONF_SCAN_MODE, "live")
         current_freq = current_options.get(CONF_SCAN_FREQUENCY, 1)
 
