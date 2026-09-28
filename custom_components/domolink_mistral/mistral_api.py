@@ -37,7 +37,7 @@ def _safe_json_loads(content: str) -> dict:
         pass
 
     # 2. Extraction d'un bloc markdown ```json ... ``` n'importe où dans le texte
-    md_match = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", cleaned, flags=re.IGNORECASE)
+    md_match = re.search(r"```(?:json)?\s*([\s\S]*?)(?:```|$)", cleaned, flags=re.IGNORECASE)
     if md_match:
         candidate = md_match.group(1).strip()
         try:
@@ -47,47 +47,107 @@ def _safe_json_loads(content: str) -> dict:
             if isinstance(res, list):
                 return {"issues": res}
         except Exception:
-            pass
+            cleaned = candidate
 
-    # 3. Extraction entre la première accolade '{' et la dernière '}'
+    # 3. Extraction du premier '{'
     first_brace = cleaned.find("{")
-    last_brace = cleaned.rfind("}")
-    if first_brace != -1 and last_brace > first_brace:
-        candidate = cleaned[first_brace : last_brace + 1].strip()
-        try:
-            res = json.loads(candidate, strict=False)
-            if isinstance(res, dict):
-                return res
-        except Exception:
-            # Nettoyage des virgules orphelines avant les fermetures ] ou }
-            fixed = re.sub(r",\s*([}\]])", r"\1", candidate)
-            try:
-                res = json.loads(fixed, strict=False)
-                if isinstance(res, dict):
-                    return res
-            except Exception:
-                pass
-
-    # 4. Tentative de sauvetage en cas de JSON tronqué (accolades/crochets non fermés)
     if first_brace != -1:
-        truncated_candidate = cleaned[first_brace:].strip()
-        # Enlever les balises markdown de fin si présentes
-        truncated_candidate = re.sub(r"```.*$", "", truncated_candidate, flags=re.DOTALL).strip()
-        open_braces = truncated_candidate.count("{") - truncated_candidate.count("}")
-        open_brackets = truncated_candidate.count("[") - truncated_candidate.count("]")
-        repaired = truncated_candidate
-        if repaired.endswith(","):
-            repaired = repaired[:-1]
-        repaired += ("]" * max(0, open_brackets)) + ("}" * max(0, open_braces))
+        cleaned = cleaned[first_brace:]
+
+    # 4. Correction des antislashs non valides en JSON (ex: \s, \d, \w, regex, chemins)
+    sanitized = re.sub(r'\\(?![/\"\\bfnrtu])', r'\\\\', cleaned)
+    try:
+        res = json.loads(sanitized, strict=False)
+        if isinstance(res, dict):
+            return res
+        if isinstance(res, list):
+            return {"issues": res}
+    except Exception:
+        pass
+
+    # 5. Nettoyage des virgules orphelines (ex: [1, 2, ])
+    no_trailing = re.sub(r",\s*([}\]])", r"\1", sanitized)
+    try:
+        res = json.loads(no_trailing, strict=False)
+        if isinstance(res, dict):
+            return res
+    except Exception:
+        pass
+
+    # 6. Sauvetage chirurgical en cas de JSON tronqué (max_tokens atteint ou coupure)
+    in_str = False
+    esc = False
+    for ch in no_trailing:
+        if esc:
+            esc = False
+            continue
+        if ch == '\\':
+            esc = True
+            continue
+        if ch == '"':
+            in_str = not in_str
+
+    repaired = no_trailing.rstrip()
+    if in_str:
+        # Fermer la chaîne coupée au milieu d'un nom de clé ou d'une valeur
+        repaired += '"'
+
+    # Supprimer les clés orphelines partielles ou sans valeur
+    repaired = re.sub(r',\s*"[^"]*"\s*:\s*$', "", repaired)
+    repaired = re.sub(r',\s*"[^"]*"\s*$', "", repaired)
+    repaired = re.sub(r',\s*([}\]])', r"\1", repaired)
+
+    # Reconstitution de la pile exacte d'accolades et de crochets ouverts
+    stack = []
+    in_str = False
+    esc = False
+    for ch in repaired:
+        if esc:
+            esc = False
+            continue
+        if ch == '\\':
+            esc = True
+            continue
+        if ch == '"':
+            in_str = not in_str
+            continue
+        if in_str:
+            continue
+        if ch == '{':
+            stack.append('}')
+        elif ch == '[':
+            stack.append(']')
+        elif ch in '}]':
+            if stack and stack[-1] == ch:
+                stack.pop()
+
+    repaired_with_closing = repaired + ''.join(reversed(stack))
+    try:
+        res = json.loads(repaired_with_closing, strict=False)
+        if isinstance(res, dict):
+            _LOGGER.warning("DomoLink-Mistral: Réponse JSON tronquée réparée avec succès.")
+            return res
+        if isinstance(res, list):
+            return {"issues": res}
+    except Exception:
+        pass
+
+    # 7. Filet de sécurité : extraction regex de chaque bloc d'anomalie {...}
+    issue_objects = []
+    pattern = re.compile(r'\{[^{}]*"id"\s*:\s*"[^"]+"[^{}]*\}', re.DOTALL)
+    for m in pattern.finditer(cleaned):
         try:
-            res = json.loads(repaired, strict=False)
-            if isinstance(res, dict):
-                _LOGGER.warning("DomoLink-Mistral: Réponse JSON tronquée réparée avec succès.")
-                return res
+            obj = json.loads(m.group(0), strict=False)
+            if isinstance(obj, dict) and "id" in obj:
+                issue_objects.append(obj)
         except Exception:
             pass
 
-    # 5. En cas d'échec total, lever une erreur explicite avec le début de la réponse pour le débug
+    if issue_objects:
+        _LOGGER.warning("DomoLink-Mistral: %s anomalies extraites par parsing résilient.", len(issue_objects))
+        return {"issues": issue_objects}
+
+    # 8. En cas d'échec total, lever une erreur explicite avec le début de la réponse pour le débug
     snippet = cleaned[:200] if len(cleaned) > 200 else cleaned
     raise json.JSONDecodeError(f"Contenu non convertible en JSON (extrait: '{snippet}')", cleaned, 0)
 
@@ -139,6 +199,8 @@ Règles importantes :
 - Classe les problèmes par gravité décroissante (high en premier).
 - Ne signale pas les messages INFO normaux.
 - Pour les erreurs de syntaxe YAML ou ESPHome, propose la correction exacte dans "manual_fix" et "auto_fix_script".
+- IMPORTANT JSON : Pour citer des mots, entités ou plateformes dans les textes (title, description, manual_fix), utilise UNIQUEMENT des apostrophes simples '...' (ex: 'dallas' ou 'light.salon') et JAMAIS de guillemets doubles non échappés.
+- Reste synthétique et direct dans chaque description pour garantir une réponse complète sans coupure.
 
 Voici le rapport complet de l'instance Home Assistant :
 ```
