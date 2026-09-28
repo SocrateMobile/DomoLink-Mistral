@@ -1,7 +1,7 @@
 """Constantes pour l'intégration Domolink-Mistral."""
 
 DOMAIN = "domolink_mistral"
-VERSION = "2.9.16"
+VERSION = "2.9.17"
 
 CONF_API_KEY = "api_key"
 CONF_MODEL = "model"
@@ -12,15 +12,16 @@ MODE_LIVE = "live"
 MODE_BOOT = "boot"
 MODE_MANUAL = "manual"
 
-DEFAULT_MODEL = "mistral-large-latest"
+DEFAULT_MODEL = "open-mistral-nemo"
 
 MODELS = [
-    "mistral-large-2411",
-    "mistral-large-latest",
-    "pixtral-12b-2409",
-    "ministral-8b-latest",
-    "mistral-small-latest",
-    "open-mistral-nemo",
+    "open-mistral-nemo",      # Recommandé (Gratuit / Rapide / 128k contexte)
+    "ministral-8b-latest",    # Gratuit (Léger & Économe)
+    "ministral-3b-latest",    # Gratuit (Ultra rapide)
+    "codestral-latest",       # Gratuit (Spécialisé YAML & Code)
+    "mistral-small-latest",   # Polyvalent
+    "mistral-large-latest",   # Haute précision (Compte payant requis)
+    "pixtral-12b-2409",       # Vision / Caméras
 ]
 
 SCAN_MODES = {

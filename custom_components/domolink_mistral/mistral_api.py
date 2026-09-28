@@ -86,23 +86,44 @@ Voici le rapport complet de l'instance Home Assistant :
 
 def _format_mistral_http_error(status: int, message: str = "") -> dict:
     """Formate une erreur HTTP Mistral avec un diagnostic clair pour l'utilisateur."""
-    if status == 429:
+    if status == 400:
         return {
-            "type": "rate_limit",
-            "user_msg": "🚫 Limite de requêtes atteinte (HTTP 429 : Too Many Requests). Votre quota Mistral AI est temporairement dépassé ou votre palier de requêtes/minute a été atteint. Vérifiez votre consommation sur console.mistral.ai ou réessayez dans quelques minutes.",
-            "log": f"Erreur HTTP 429 Too Many Requests (Quota ou Rate Limit Mistral dépassé) : {message}",
+            "type": "bad_request",
+            "user_msg": (
+                f"⚠️ Requête invalide (HTTP 400 : {message}). "
+                "Le modèle sélectionné n'est plus supporté par Mistral AI ou la requête est malformée. "
+                "Veuillez choisir un modèle compatible comme 'open-mistral-nemo' ou 'ministral-8b-latest' dans les options de l'intégration."
+            ),
+            "log": f"Erreur HTTP 400 Bad Request : {message}",
         }
     elif status == 401:
         return {
             "type": "auth_error",
-            "user_msg": "🔑 Clé API invalide ou révoquée (HTTP 401 : Unauthorized). Veuillez vérifier votre clé API sur console.mistral.ai et mettre à jour la configuration DomoLink-Mistral.",
+            "user_msg": (
+                "🔑 Clé API invalide ou révoquée (HTTP 401 : Unauthorized). "
+                "Veuillez vérifier votre clé API sur console.mistral.ai et mettre à jour la configuration DomoLink-Mistral."
+            ),
             "log": f"Erreur HTTP 401 Unauthorized (Clé API Mistral invalide) : {message}",
         }
     elif status == 403:
         return {
             "type": "forbidden",
-            "user_msg": "⛔ Accès refusé (HTTP 403 : Forbidden). Votre compte Mistral n'a pas les autorisations nécessaires ou vos crédits d'utilisation sont épuisés. Rendez-vous sur console.mistral.ai.",
+            "user_msg": (
+                f"⛔ Accès refusé (HTTP 403 : {message}). "
+                "Ce modèle (ex: mistral-large) n'est pas autorisé avec votre formule d'abonnement Mistral. "
+                "Si vous avez une clé gratuite, sélectionnez 'open-mistral-nemo' ou 'ministral-8b-latest' dans les options de l'intégration."
+            ),
             "log": f"Erreur HTTP 403 Forbidden : {message}",
+        }
+    elif status == 429:
+        return {
+            "type": "rate_limit",
+            "user_msg": (
+                "🚫 Limite de requêtes atteinte (HTTP 429 : Too Many Requests). "
+                "Votre quota Mistral AI est temporairement dépassé ou votre palier de requêtes/minute a été atteint. "
+                "Vérifiez votre consommation sur console.mistral.ai ou réessayez dans quelques minutes."
+            ),
+            "log": f"Erreur HTTP 429 Too Many Requests (Quota ou Rate Limit Mistral dépassé) : {message}",
         }
     elif status >= 500:
         return {
@@ -156,7 +177,25 @@ async def analyze_with_mistral(
         async with session.post(
             MISTRAL_URL, headers=headers, json=payload, timeout=API_TIMEOUT
         ) as response:
-            response.raise_for_status()
+            if response.status != 200:
+                err_data = {}
+                try:
+                    err_data = await response.json()
+                except Exception:
+                    pass
+                raw_msg = err_data.get("message") if isinstance(err_data, dict) else ""
+                err_info = _format_mistral_http_error(
+                    response.status,
+                    raw_msg or response.reason or "",
+                )
+                _LOGGER.error("DomoLink-Mistral: %s", err_info["log"])
+                return {
+                    "success": False,
+                    "error": err_info["user_msg"],
+                    "error_type": err_info["type"],
+                    "issues": [],
+                }
+
             data = await response.json()
             content = data["choices"][0]["message"]["content"]
             result = _safe_json_loads(content)
@@ -276,7 +315,15 @@ Génère l'automation correspondante au format JSON structuré."""
         async with session.post(
             MISTRAL_URL, headers=headers, json=payload, timeout=API_TIMEOUT
         ) as response:
-            response.raise_for_status()
+            if response.status != 200:
+                err_data = {}
+                try:
+                    err_data = await response.json()
+                except Exception:
+                    pass
+                raw_msg = err_data.get("message") if isinstance(err_data, dict) else (response.reason or "")
+                err_info = _format_mistral_http_error(response.status, raw_msg)
+                return {"success": False, "response_text": err_info["user_msg"], "service_calls": []}
             data = await response.json()
             content = data["choices"][0]["message"]["content"]
             result = _safe_json_loads(content)
@@ -352,7 +399,15 @@ async def process_conversation_with_mistral(
         async with session.post(
             MISTRAL_URL, headers=headers, json=payload, timeout=API_TIMEOUT
         ) as response:
-            response.raise_for_status()
+            if response.status != 200:
+                err_data = {}
+                try:
+                    err_data = await response.json()
+                except Exception:
+                    pass
+                raw_msg = err_data.get("message") if isinstance(err_data, dict) else (response.reason or "")
+                err_info = _format_mistral_http_error(response.status, raw_msg)
+                return {"success": False, "response_text": err_info["user_msg"], "service_calls": []}
             data = await response.json()
             message_obj = data["choices"][0]["message"]
             response_text = message_obj.get("content") or ""
@@ -431,7 +486,15 @@ async def analyze_image_with_pixtral(
         async with session.post(
             MISTRAL_URL, headers=headers, json=payload, timeout=API_TIMEOUT
         ) as response:
-            response.raise_for_status()
+            if response.status != 200:
+                err_data = {}
+                try:
+                    err_data = await response.json()
+                except Exception:
+                    pass
+                raw_msg = err_data.get("message") if isinstance(err_data, dict) else (response.reason or "")
+                err_info = _format_mistral_http_error(response.status, raw_msg)
+                return {"success": False, "response_text": err_info["user_msg"], "service_calls": []}
             data = await response.json()
             content = data["choices"][0]["message"]["content"]
             result = _safe_json_loads(content)
@@ -490,7 +553,15 @@ Réponds UNIQUEMENT en JSON avec la structure :
         async with session.post(
             MISTRAL_URL, headers=headers, json=payload, timeout=API_TIMEOUT
         ) as response:
-            response.raise_for_status()
+            if response.status != 200:
+                err_data = {}
+                try:
+                    err_data = await response.json()
+                except Exception:
+                    pass
+                raw_msg = err_data.get("message") if isinstance(err_data, dict) else (response.reason or "")
+                err_info = _format_mistral_http_error(response.status, raw_msg)
+                return {"success": False, "response_text": err_info["user_msg"], "service_calls": []}
             data = await response.json()
             content = data["choices"][0]["message"]["content"]
             result = _safe_json_loads(content)

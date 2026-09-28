@@ -27,8 +27,11 @@ from homeassistant.helpers.storage import Store
 from .const import (
     DOMAIN,
     VERSION,
+    CONF_MODEL,
     CONF_SCAN_FREQUENCY,
     CONF_SCAN_MODE,
+    DEFAULT_MODEL,
+    MODELS,
     MODE_BOOT,
     MODE_LIVE,
     MODE_MANUAL,
@@ -87,10 +90,22 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     cancel_listeners: list = []
 
+    # ── Migration automatique des anciens modèles invalides ou incompatibles ──
+    options = dict(entry.options)
+    current_model = options.get(CONF_MODEL)
+    if current_model == "mistral-large-2411" or (current_model and current_model not in MODELS):
+        _LOGGER.warning(
+            "DomoLink-Mistral IA: Le modèle '%s' n'est plus supporté. Migration automatique vers '%s'.",
+            current_model,
+            DEFAULT_MODEL,
+        )
+        options[CONF_MODEL] = DEFAULT_MODEL
+        hass.config_entries.async_update_entry(entry, options=options)
+
     # ── Données de l'intégration ──
     hass.data[DOMAIN][entry.entry_id] = {
         "api_key": entry.data.get("api_key"),
-        "options": entry.options,
+        "options": options,
         "sensor": None,  # Sera peuplé par sensor.py
         "updater": updater,
         "update_entity": None,
@@ -103,8 +118,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     _LOGGER.info(
         "DomoLink-Mistral IA initialisé — version: %s, modèle: %s, mode: %s",
         VERSION,
-        entry.options.get("model"),
-        entry.options.get("scan_mode"),
+        options.get(CONF_MODEL, DEFAULT_MODEL),
+        options.get(CONF_SCAN_MODE, "live"),
     )
 
     # ── Enregistrement du panneau frontend (sidebar) ──
@@ -193,8 +208,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             # ── Étape 2 : Envoi à Mistral ──
             api_key = hass.data[DOMAIN][entry.entry_id]["api_key"]
             model = hass.data[DOMAIN][entry.entry_id]["options"].get(
-                "model", "mistral-large-latest"
+                CONF_MODEL, DEFAULT_MODEL
             )
+            if model == "mistral-large-2411" or (model and model not in MODELS):
+                model = DEFAULT_MODEL
 
             if sensor:
                 sensor.set_status(
@@ -236,6 +253,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                         f"**Authentification échouée auprès de Mistral AI :**\n\n"
                         f"{error_msg}\n\n"
                         f"💡 Rendez-vous dans *Paramètres > Appareils et Services > DomoLink-Mistral IA* pour mettre à jour votre clé API."
+                    )
+                elif error_type in ("bad_request", "forbidden"):
+                    notif_title = "⚙️ DomoLink-Mistral — Modèle incompatible ou accès refusé"
+                    notif_body = (
+                        f"**Erreur liée au modèle Mistral AI :**\n\n"
+                        f"{error_msg}\n\n"
+                        f"💡 **Solution :**\n"
+                        f"- Rendez-vous dans *Paramètres > Appareils et Services > DomoLink-Mistral IA > Configurer*.\n"
+                        f"- Sélectionnez le modèle recommandé gratuit **open-mistral-nemo** ou **ministral-8b-latest**."
                     )
                 else:
                     notif_title = "⚠️ DomoLink-Mistral — Erreur d'analyse"
