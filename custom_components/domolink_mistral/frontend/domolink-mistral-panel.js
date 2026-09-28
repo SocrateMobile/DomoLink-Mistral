@@ -205,7 +205,7 @@ class DomolinkMistralPanel extends HTMLElement {
     }
   }
 
-  _cleanVersion(v, fallback = "2.9.26") {
+  _cleanVersion(v, fallback = "2.9.27") {
     const s = String(v || fallback).trim().replace(/^[vV]+/, "");
     return s || fallback;
   }
@@ -424,7 +424,7 @@ class DomolinkMistralPanel extends HTMLElement {
       const newLast = attrs.last_analysis || null;
       const newStatus = attrs.current_status || "En attente";
       const newLastError = attrs.last_error || null;
-      const newIssues = attrs.issues || [];
+      const newIssues = attrs.issues || attrs.recent_issues || [];
       const newIgnored = attrs.ignored_issues || [];
 
       const changed = (
@@ -1010,6 +1010,7 @@ class DomolinkMistralPanel extends HTMLElement {
   _renderIssueCard(issue) {
     const hasAuto = issue.auto_fix_script && issue.auto_fix_script.length > 0;
     const borderColor = this._severityColor(issue.severity);
+    const filePath = issue.file || (issue.auto_fix_script && issue.auto_fix_script[0] && issue.auto_fix_script[0].file) || "";
 
     return `
       <div class="issue-card" style="border-left-color: ${borderColor};">
@@ -1040,9 +1041,9 @@ class DomolinkMistralPanel extends HTMLElement {
           ${this._escapeHtml(issue.description || "")}
         </p>
 
-        ${issue.file ? `
+        ${filePath ? `
           <div style="font-size: 0.8em; color: var(--secondary-text-color); margin-top: 6px;">
-            📁 Fichier concerné : <code>${this._escapeHtml(issue.file)}</code> ${issue.line ? `(Ligne ${issue.line})` : ""}
+            📁 Fichier concerné : <code>${this._escapeHtml(filePath)}</code> ${issue.line ? `(Ligne ${issue.line})` : ""}
           </div>
         ` : ""}
       </div>
@@ -1249,6 +1250,14 @@ class DomolinkMistralPanel extends HTMLElement {
   _renderModal() {
     if (!this._selectedIssue) return "";
     const issue = this._selectedIssue;
+    const filePath = issue.file || (issue.auto_fix_script && issue.auto_fix_script[0] && issue.auto_fix_script[0].file) || "";
+    const rawGuide = issue.manual_fix || issue.manual_guide;
+    let guideText = "";
+    if (Array.isArray(rawGuide)) {
+      guideText = rawGuide.join("\n\n");
+    } else if (typeof rawGuide === "string") {
+      guideText = rawGuide;
+    }
 
     return `
       <div class="modal-floating" id="modal" style="left: ${this._modalPos.x !== null ? this._modalPos.x + "px" : "calc(50vw - 240px)"}; top: ${this._modalPos.y !== null ? this._modalPos.y + "px" : "100px"};">
@@ -1260,14 +1269,14 @@ class DomolinkMistralPanel extends HTMLElement {
           <h4>${this._escapeHtml(issue.title)}</h4>
           <p>${this._escapeHtml(issue.description)}</p>
 
-          ${issue.file ? `
-            <p><strong>Fichier :</strong> <code>${this._escapeHtml(issue.file)}</code> ${issue.line ? `(Ligne ${issue.line})` : ""}</p>
+          ${filePath ? `
+            <p><strong>Fichier :</strong> <code>${this._escapeHtml(filePath)}</code> ${issue.line ? `(Ligne ${issue.line})` : ""}</p>
           ` : ""}
 
-          ${issue.manual_guide ? `
+          ${guideText ? `
             <div style="background: rgba(0,0,0,0.03); padding: 12px; border-radius: 8px; font-size: 0.9em; margin-top: 10px;">
               <strong>Étapes à suivre :</strong>
-              <div style="white-space: pre-wrap; margin-top: 6px;">${this._escapeHtml(issue.manual_guide)}</div>
+              <div style="white-space: pre-wrap; margin-top: 6px;">${this._escapeHtml(guideText)}</div>
             </div>
           ` : ""}
         </div>

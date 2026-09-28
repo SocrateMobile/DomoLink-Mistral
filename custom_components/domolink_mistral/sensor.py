@@ -63,12 +63,11 @@ class DomolinkMistralSensor(SensorEntity):
 
     @property
     def extra_state_attributes(self) -> dict:
-        """Attributs compacts sécurisés (< 16 Ko) pour l'enregistreur."""
+        """Attributs d'état pour le panneau et le dashboard Home Assistant."""
         high_count = sum(1 for i in self._issues if i.get("severity") == "high")
         medium_count = sum(1 for i in self._issues if i.get("severity") == "medium")
         low_count = sum(1 for i in self._issues if i.get("severity") == "low")
 
-        # Résumé allégé pour le dashboard sans exploser la taille en base
         compact_issues = [
             {
                 "id": str(i.get("id", "")),
@@ -79,11 +78,13 @@ class DomolinkMistralSensor(SensorEntity):
         ]
 
         return {
+            "issues": self._issues,
+            "recent_issues": compact_issues,
+            "ignored_issues": self._ignored_issues,
             "high_issues": high_count,
             "medium_issues": medium_count,
             "low_issues": low_count,
             "ignored_count": len(self._ignored_issues),
-            "recent_issues": compact_issues,
             "last_analysis": self._last_analysis,
             "current_status": self._current_status,
             "last_error": self._last_error,
