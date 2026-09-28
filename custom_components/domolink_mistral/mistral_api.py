@@ -133,7 +133,7 @@ def _safe_json_loads(content: str) -> dict:
     try:
         res = json.loads(repaired_with_closing, strict=False)
         if isinstance(res, dict):
-            _LOGGER.warning("DomoLink-Mistral: Réponse JSON tronquée réparée avec succès.")
+            _LOGGER.info("DomoLink-Mistral: Réponse JSON tronquée réparée avec succès.")
             return res
         if isinstance(res, list):
             return {"issues": res}
@@ -152,7 +152,7 @@ def _safe_json_loads(content: str) -> dict:
             pass
 
     if issue_objects:
-        _LOGGER.warning("DomoLink-Mistral: %s anomalies extraites par parsing résilient.", len(issue_objects))
+        _LOGGER.info("DomoLink-Mistral: %s anomalies extraites par parsing résilient.", len(issue_objects))
         return {"issues": issue_objects}
 
     # 8. En cas d'échec total, lever une erreur explicite avec le début de la réponse pour le débug
@@ -337,6 +337,25 @@ async def analyze_with_mistral(
                 result = {"issues": []}
 
             result["success"] = True
+
+            # Sauvegarde automatique du rapport JSON et de la réponse brute dans /config/
+            try:
+                def _save_reports():
+                    import json, os
+                    cfg = hass.config.config_dir
+                    report_path = os.path.join(cfg, "domolink_mistral_latest_analysis.json")
+                    with open(report_path, "w", encoding="utf-8") as f:
+                        json.dump(result, f, ensure_ascii=False, indent=2)
+
+                    raw_path = os.path.join(cfg, "domolink_mistral_raw_response.json")
+                    with open(raw_path, "w", encoding="utf-8") as f:
+                        f.write(content)
+
+                await hass.async_add_executor_job(_save_reports)
+                _LOGGER.info("DomoLink-Mistral: Rapport JSON sauvegardé dans domolink_mistral_latest_analysis.json")
+            except Exception as save_err:
+                _LOGGER.warning("DomoLink-Mistral: Erreur écriture sauvegarde rapport JSON: %s", save_err)
+
             return result
 
     except aiohttp.ClientResponseError as e:
