@@ -170,7 +170,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                         "module_url": f"/domolink_mistral_frontend/domolink-mistral-panel.js?v={ver}&t={mtime}",
                     }
                 },
-                require_admin=False,
+                require_admin=True,
                 update=True,
             )
         except Exception:
@@ -770,18 +770,28 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         return res
 
     # ── Enregistrement des services ──
-    hass.services.async_register(DOMAIN, "rollback_latest_fix", handle_rollback)
+    from homeassistant.helpers.service import async_register_admin_service
 
+    # Services d'administration (modification YAML, exécution de correctifs et mises à jour système)
+    async_register_admin_service(hass, DOMAIN, "rollback_latest_fix", handle_rollback)
+    async_register_admin_service(hass, DOMAIN, "apply_fix", handle_apply_fix)
+    async_register_admin_service(hass, DOMAIN, "apply_all_fixes", handle_apply_all_fixes)
+    async_register_admin_service(
+        hass, DOMAIN, "save_automation", handle_save_automation, supports_response=SupportsResponse.OPTIONAL
+    )
+    async_register_admin_service(
+        hass, DOMAIN, "perform_update", handle_perform_update, supports_response=SupportsResponse.OPTIONAL
+    )
+    async_register_admin_service(
+        hass, DOMAIN, "install_update", handle_perform_update, supports_response=SupportsResponse.OPTIONAL
+    )
+
+    # Services de diagnostic et d'assistance IA
     hass.services.async_register(DOMAIN, "analyze_now", handle_analyze_now)
-    hass.services.async_register(DOMAIN, "apply_fix", handle_apply_fix)
     hass.services.async_register(DOMAIN, "ignore_issue", handle_ignore_issue)
     hass.services.async_register(DOMAIN, "unignore_issue", handle_unignore_issue)
-    hass.services.async_register(DOMAIN, "apply_all_fixes", handle_apply_all_fixes)
     hass.services.async_register(
         DOMAIN, "generate_automation", handle_generate_automation, supports_response=SupportsResponse.OPTIONAL
-    )
-    hass.services.async_register(
-        DOMAIN, "save_automation", handle_save_automation, supports_response=SupportsResponse.OPTIONAL
     )
     hass.services.async_register(
         DOMAIN, "analyze_image", handle_analyze_image, supports_response=SupportsResponse.OPTIONAL
@@ -794,12 +804,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     )
     hass.services.async_register(
         DOMAIN, "check_updates", handle_check_update, supports_response=SupportsResponse.OPTIONAL
-    )
-    hass.services.async_register(
-        DOMAIN, "perform_update", handle_perform_update, supports_response=SupportsResponse.OPTIONAL
-    )
-    hass.services.async_register(
-        DOMAIN, "install_update", handle_perform_update, supports_response=SupportsResponse.OPTIONAL
     )
 
     # ═══════════════════════════════════════════════════════

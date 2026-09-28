@@ -60,8 +60,22 @@ def sanitize_logs(log_content: str) -> str:
 # ═══════════════════════════════════════════════════════
 
 async def _get_file_logs(hass: HomeAssistant, lines: int = 200) -> str:
-    """Lit les dernières lignes de homeassistant.log."""
-    log_file = hass.config.path("homeassistant.log")
+    """Lit les dernières lignes du journal Home Assistant (home-assistant.log)."""
+    candidates = [
+        hass.config.path("home-assistant.log"),
+        hass.config.path("homeassistant.log"),
+        hass.config.path("home-assistant.log.1"),
+    ]
+    log_file = None
+    for c in candidates:
+        if os.path.exists(c):
+            log_file = c
+            break
+
+    if not log_file:
+        _LOGGER.debug("DomoLink-Mistral: Aucun fichier de log Home Assistant trouvé sur le disque.")
+        return ""
+
     try:
         def read_tail():
             with open(log_file, "r", encoding="utf-8", errors="replace") as f:
@@ -69,12 +83,10 @@ async def _get_file_logs(hass: HomeAssistant, lines: int = 200) -> str:
 
         content = await hass.async_add_executor_job(read_tail)
         if content:
-            _LOGGER.debug("DomoLink-Mistral: %s lignes lues depuis homeassistant.log", lines)
+            _LOGGER.debug("DomoLink-Mistral: %s lignes lues depuis %s", lines, os.path.basename(log_file))
             return content
-    except FileNotFoundError:
-        _LOGGER.debug("DomoLink-Mistral: Fichier homeassistant.log introuvable.")
     except Exception as e:
-        _LOGGER.error("DomoLink-Mistral: Erreur lecture homeassistant.log: %s", e)
+        _LOGGER.error("DomoLink-Mistral: Erreur lecture %s: %s", log_file, e)
     return ""
 
 
@@ -432,10 +444,13 @@ async def _get_integration_issues(hass: HomeAssistant) -> str:
     not_loaded = []
 
     for entry in entries:
+        if getattr(entry, "disabled_by", None):
+            continue  # Ne pas signaler les intégrations volontairement désactivées par l'utilisateur
         state_str = str(entry.state)
-        if "error" in state_str or "failed" in state_str:
+        state_lower = state_str.lower()
+        if "error" in state_lower or "failed" in state_lower:
             failed.append(f"  🔴 {entry.title} ({entry.domain}) — État: {state_str}")
-        elif "not_loaded" in state_str or "retry" in state_str:
+        elif "not_loaded" in state_lower or "retry" in state_lower:
             not_loaded.append(f"  🟡 {entry.title} ({entry.domain}) — État: {state_str}")
 
     if not failed and not not_loaded:
