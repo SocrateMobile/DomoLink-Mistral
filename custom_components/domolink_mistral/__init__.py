@@ -15,9 +15,12 @@ import os
 import shutil
 from datetime import timedelta
 
+import voluptuous as vol
+
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, ServiceCall, SupportsResponse
 from homeassistant.exceptions import HomeAssistantError
+import homeassistant.helpers.config_validation as cv
 from homeassistant.helpers.event import (
     async_call_later,
     async_track_time_interval,
@@ -44,6 +47,42 @@ from .updater import UpdateManager, get_installed_version
 _LOGGER = logging.getLogger(__name__)
 
 PLATFORMS: list[str] = ["sensor", "button", "conversation", "update"]
+
+# ── Schémas de validation pour les services ──
+# Sans ces schémas, HA applique un schéma vide qui rejette tous les paramètres.
+
+APPLY_FIX_SCHEMA = vol.Schema({
+    vol.Required("fix_script"): vol.Any(str, list, dict),
+    vol.Optional("issue_id"): cv.string,
+})
+
+ISSUE_ID_SCHEMA = vol.Schema({
+    vol.Required("issue_id"): cv.string,
+})
+
+SAVE_AUTOMATION_SCHEMA = vol.Schema({
+    vol.Required("yaml"): cv.string,
+})
+
+GENERATE_AUTOMATION_SCHEMA = vol.Schema({
+    vol.Required("prompt"): cv.string,
+})
+
+ANALYZE_IMAGE_SCHEMA = vol.Schema({
+    vol.Optional("camera_entity_id"): cv.string,
+    vol.Optional("image_path"): cv.string,
+    vol.Optional("prompt"): cv.string,
+    vol.Optional("model"): cv.string,
+})
+
+DAILY_BRIEFING_SCHEMA = vol.Schema({
+    vol.Optional("time_of_day", default="auto"): cv.string,
+    vol.Optional("custom_instruction"): cv.string,
+})
+
+UPDATE_SCHEMA = vol.Schema({
+    vol.Optional("restart", default=True): cv.boolean,
+})
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -759,30 +798,36 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     # Services d'administration (modification YAML, exécution de correctifs et mises à jour système)
     async_register_admin_service(hass, DOMAIN, "rollback_latest_fix", handle_rollback)
-    async_register_admin_service(hass, DOMAIN, "apply_fix", handle_apply_fix)
+    async_register_admin_service(hass, DOMAIN, "apply_fix", handle_apply_fix, schema=APPLY_FIX_SCHEMA)
     async_register_admin_service(hass, DOMAIN, "apply_all_fixes", handle_apply_all_fixes)
     async_register_admin_service(
-        hass, DOMAIN, "save_automation", handle_save_automation, supports_response=SupportsResponse.OPTIONAL
+        hass, DOMAIN, "save_automation", handle_save_automation,
+        schema=SAVE_AUTOMATION_SCHEMA, supports_response=SupportsResponse.OPTIONAL
     )
     async_register_admin_service(
-        hass, DOMAIN, "perform_update", handle_perform_update, supports_response=SupportsResponse.OPTIONAL
+        hass, DOMAIN, "perform_update", handle_perform_update,
+        schema=UPDATE_SCHEMA, supports_response=SupportsResponse.OPTIONAL
     )
     async_register_admin_service(
-        hass, DOMAIN, "install_update", handle_perform_update, supports_response=SupportsResponse.OPTIONAL
+        hass, DOMAIN, "install_update", handle_perform_update,
+        schema=UPDATE_SCHEMA, supports_response=SupportsResponse.OPTIONAL
     )
 
     # Services de diagnostic et d'assistance IA (réservés aux administrateurs pour protéger le quota et les accès système)
     async_register_admin_service(hass, DOMAIN, "analyze_now", handle_analyze_now)
-    async_register_admin_service(hass, DOMAIN, "ignore_issue", handle_ignore_issue)
-    async_register_admin_service(hass, DOMAIN, "unignore_issue", handle_unignore_issue)
+    async_register_admin_service(hass, DOMAIN, "ignore_issue", handle_ignore_issue, schema=ISSUE_ID_SCHEMA)
+    async_register_admin_service(hass, DOMAIN, "unignore_issue", handle_unignore_issue, schema=ISSUE_ID_SCHEMA)
     async_register_admin_service(
-        hass, DOMAIN, "generate_automation", handle_generate_automation, supports_response=SupportsResponse.OPTIONAL
+        hass, DOMAIN, "generate_automation", handle_generate_automation,
+        schema=GENERATE_AUTOMATION_SCHEMA, supports_response=SupportsResponse.OPTIONAL
     )
     async_register_admin_service(
-        hass, DOMAIN, "analyze_image", handle_analyze_image, supports_response=SupportsResponse.OPTIONAL
+        hass, DOMAIN, "analyze_image", handle_analyze_image,
+        schema=ANALYZE_IMAGE_SCHEMA, supports_response=SupportsResponse.OPTIONAL
     )
     async_register_admin_service(
-        hass, DOMAIN, "generate_daily_briefing", handle_generate_daily_briefing, supports_response=SupportsResponse.OPTIONAL
+        hass, DOMAIN, "generate_daily_briefing", handle_generate_daily_briefing,
+        schema=DAILY_BRIEFING_SCHEMA, supports_response=SupportsResponse.OPTIONAL
     )
     async_register_admin_service(
         hass, DOMAIN, "check_update", handle_check_update, supports_response=SupportsResponse.OPTIONAL
