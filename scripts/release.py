@@ -70,24 +70,7 @@ def update_version_files(new_ver: str) -> None:
         f.write("\n")
     print(f"Updated {MANIFEST_PATH} -> {new_ver}")
 
-    # 2. const.py
-    with open(CONST_PATH, "r", encoding="utf-8") as f:
-        content = f.read()
-    new_content = re.sub(r'VERSION\s*=\s*"[^"]+"', f'VERSION = "{new_ver}"', content)
-    with open(CONST_PATH, "w", encoding="utf-8") as f:
-        f.write(new_content)
-    print(f"Updated {CONST_PATH} -> {new_ver}")
-
-    # 3. domolink-mistral-panel.js
-    if os.path.exists(PANEL_PATH):
-        with open(PANEL_PATH, "r", encoding="utf-8") as f:
-            p_content = f.read()
-        p_content = re.sub(r'fallback\s*=\s*"[^"]+"', f'fallback = "{new_ver}"', p_content)
-        with open(PANEL_PATH, "w", encoding="utf-8") as f:
-            f.write(p_content)
-        print(f"Updated {PANEL_PATH} -> {new_ver}")
-
-    # 4. README.md
+    # 2. README.md (Badge GitHub)
     if os.path.exists(README_PATH):
         with open(README_PATH, "r", encoding="utf-8") as f:
             readme_content = f.read()
