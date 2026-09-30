@@ -191,6 +191,36 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     _register_sidebar_panel(has_update=False)
 
+    # ── Commande WebSocket pour fournir l'intégralité des anomalies sans limite de taille recorder ──
+    try:
+        from homeassistant.components import websocket_api
+        import voluptuous as vol
+
+        @websocket_api.websocket_command({
+            vol.Required("type"): "domolink_mistral/get_issues",
+        })
+        @websocket_api.async_response
+        async def ws_get_issues(
+            hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict
+        ) -> None:
+            """Retourne la liste complète et non tronquée des anomalies pour le frontend."""
+            data = hass.data.get(DOMAIN, {}).get(entry.entry_id, {})
+            all_issues = data.get("last_issues", [])
+            ignored_ids = set(data.get("ignored_ids", []))
+            active = [i for i in all_issues if i.get("id") not in ignored_ids]
+            ignored = [i for i in all_issues if i.get("id") in ignored_ids]
+            connection.send_result(
+                msg["id"],
+                {
+                    "issues": active,
+                    "ignored_issues": ignored,
+                },
+            )
+
+        websocket_api.async_register_command(hass, ws_get_issues)
+    except Exception as ws_err:
+        _LOGGER.debug("DomoLink-Mistral: Erreur enregistrement commande WS get_issues: %s", ws_err)
+
     # ── Écouteur de mise à jour des options (rechargement à chaud) ──
     entry.async_on_unload(entry.add_update_listener(async_reload_entry))
 
