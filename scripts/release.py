@@ -25,6 +25,7 @@ CONST_PATH = os.path.join(ROOT_DIR, "custom_components", "domolink_mistral", "co
 PANEL_PATH = os.path.join(
     ROOT_DIR, "custom_components", "domolink_mistral", "frontend", "domolink-mistral-panel.js"
 )
+README_PATH = os.path.join(ROOT_DIR, "README.md")
 
 
 def get_token() -> str:
@@ -85,6 +86,19 @@ def update_version_files(new_ver: str) -> None:
         with open(PANEL_PATH, "w", encoding="utf-8") as f:
             f.write(p_content)
         print(f"Updated {PANEL_PATH} -> {new_ver}")
+
+    # 4. README.md
+    if os.path.exists(README_PATH):
+        with open(README_PATH, "r", encoding="utf-8") as f:
+            readme_content = f.read()
+        readme_content = re.sub(
+            r"version-\d+\.\d+\.\d+-green\.svg",
+            f"version-{new_ver}-green.svg",
+            readme_content,
+        )
+        with open(README_PATH, "w", encoding="utf-8") as f:
+            f.write(readme_content)
+        print(f"Updated {README_PATH} -> {new_ver}")
 
 
 def run_cmd(cmd: list[str]) -> None:
