@@ -1,7 +1,17 @@
 """Constantes pour l'intégration Domolink-Mistral."""
 
+import json
+import os
+
 DOMAIN = "domolink_mistral"
-VERSION = "2.9.31"
+
+# Source unique de vérité : la version est lue directement depuis manifest.json (requis par HA & HACS)
+_MANIFEST_PATH = os.path.join(os.path.dirname(__file__), "manifest.json")
+try:
+    with open(_MANIFEST_PATH, "r", encoding="utf-8") as _f:
+        VERSION = json.load(_f).get("version", "2.9.31")
+except Exception:
+    VERSION = "2.9.32"
 
 CONF_API_KEY = "api_key"
 CONF_MODEL = "model"
