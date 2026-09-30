@@ -114,7 +114,13 @@ async def _get_file_logs(hass: HomeAssistant, lines: int = 200) -> str:
     try:
         def read_tail():
             with open(log_file, "r", encoding="utf-8", errors="replace") as f:
-                return "".join(deque(f, maxlen=lines))
+                # Filtrer les logs générés par DomoLink-Mistral lui-même afin d'éviter qu'un scan précédent
+                # ne décale la fenêtre des derniers logs et ne produise des résultats différents au scan suivant.
+                filtered = [
+                    line for line in f
+                    if "domolink_mistral" not in line.lower() and "domolink-mistral" not in line.lower()
+                ]
+                return "".join(filtered[-lines:])
 
         content = await hass.async_add_executor_job(read_tail)
         if content:
@@ -161,6 +167,10 @@ async def _get_system_log(hass: HomeAssistant) -> str:
                 message = getattr(record, "message", "")
                 exc = getattr(record, "exception", "")
                 count = getattr(record, "count", 1)
+
+            # Ignorer les propres logs de domolink pour garantir la reproductibilité
+            if "domolink_mistral" in str(name).lower() or "domolink" in str(name).lower():
+                continue
 
             if isinstance(message, list):
                 message = " ".join(str(m) for m in message)
@@ -240,14 +250,19 @@ def _check_yaml_syntax_and_read(file_path: str, max_lines: int = 150) -> dict:
 
 
 def _find_includes_in_yaml(content: str) -> list[str]:
-    """Extrait tous les fichiers et dossiers référencés par des balises !include."""
+    """Extrait tous les fichiers et dossiers référencés par des balises !include non commentées."""
     includes = []
     # Match !include <path>, !include_dir_list <path>, !include_dir_named <path>, etc.
     pattern = re.compile(r"!include(?:_dir_list|_dir_named|_dir_merge_list|_dir_merge_named)?\s+([^\s\n#]+)")
-    for match in pattern.finditer(content):
-        inc_path = match.group(1).strip("'\"")
-        if inc_path and inc_path not in includes:
-            includes.append(inc_path)
+    for line in content.splitlines():
+        clean_line = line.strip()
+        if clean_line.startswith("#"):
+            continue
+        line_clean = line.split("#")[0]
+        for match in pattern.finditer(line_clean):
+            inc_path = match.group(1).strip("'\"")
+            if inc_path and inc_path not in includes:
+                includes.append(inc_path)
     return includes
 
 
@@ -280,7 +295,7 @@ async def _analyze_all_yaml_files(hass: HomeAssistant) -> str:
 
             if os.path.isdir(current_path):
                 # Dossier inclus via !include_dir_*
-                for yaml_file in glob.glob(os.path.join(current_path, "**", "*.yaml"), recursive=True):
+                for yaml_file in sorted(glob.glob(os.path.join(current_path, "**", "*.yaml"), recursive=True)):
                     if yaml_file not in discovered_files:
                         queue.append(yaml_file)
                 continue
@@ -311,7 +326,7 @@ async def _analyze_all_yaml_files(hass: HomeAssistant) -> str:
         # ── 2. Blueprints ──
         blueprints_dir = os.path.join(config_dir, "blueprints")
         if os.path.exists(blueprints_dir):
-            bp_files = glob.glob(os.path.join(blueprints_dir, "**", "*.yaml"), recursive=True)
+            bp_files = sorted(glob.glob(os.path.join(blueprints_dir, "**", "*.yaml"), recursive=True))
             for bp_path in bp_files:
                 discovered_files.add(bp_path)
                 rel_bp = os.path.relpath(bp_path, config_dir)
@@ -326,7 +341,7 @@ async def _analyze_all_yaml_files(hass: HomeAssistant) -> str:
         esphome_dir = os.path.join(config_dir, "esphome")
         esphome_devices = []
         if os.path.exists(esphome_dir):
-            esp_files = glob.glob(os.path.join(esphome_dir, "*.yaml"))
+            esp_files = sorted(glob.glob(os.path.join(esphome_dir, "*.yaml")))
             for esp_path in esp_files:
                 # Ignorer les fichiers internes esphome
                 if os.path.basename(esp_path).startswith("."):
@@ -339,15 +354,20 @@ async def _analyze_all_yaml_files(hass: HomeAssistant) -> str:
                     yaml_syntax_errors.append(f"🔴 ERREUR SYNTAXE ESPHOME dans {rel_esp} :\n  {esp_res['error']}")
                     esphome_devices.append(f"🔴 [ESPHOME ERREUR] {rel_esp} :\n  {esp_res['error']}")
                 else:
-                    # Analyse sémantique rapide ESPHome
+                    # Analyse sémantique rapide ESPHome (en ignorant les lignes commentées avec #)
                     content = esp_res.get("content_excerpt", "")
-                    esp_name = re.search(r"name:\s*([a-zA-Z0-9_-]+)", content)
+                    active_lines = [
+                        line.strip() for line in content.splitlines()
+                        if line.strip() and not line.strip().startswith("#")
+                    ]
+                    active_content = "\n".join(active_lines)
+                    esp_name = re.search(r"name:\s*([a-zA-Z0-9_-]+)", active_content)
                     dev_name = esp_name.group(1) if esp_name else os.path.splitext(os.path.basename(esp_path))[0]
                     
                     notes = []
-                    if "dallas:" in content:
+                    if any("dallas:" in l for l in active_lines):
                         notes.append("⚠️ Utilise la plateforme dépréciée 'dallas' (remplacée par 'one_wire')")
-                    if "captive_portal:" not in content and "wifi:" in content:
+                    if not any("captive_portal:" in l for l in active_lines) and any("wifi:" in l for l in active_lines):
                         notes.append("ℹ️ Pas de 'captive_portal:' en cas de perte WiFi")
 
                     status_str = f" ({', '.join(notes)})" if notes else " (OK)"
@@ -386,9 +406,12 @@ async def _analyze_all_yaml_files(hass: HomeAssistant) -> str:
 
 async def _get_automations_report(hass: HomeAssistant) -> str:
     """Inspecte toutes les automations et génère un rapport."""
-    states = hass.states.async_all("automation")
-    if not states:
+    raw_states = hass.states.async_all("automation")
+    if not raw_states:
         return ""
+
+    # Tri par entity_id pour garantir la reproductibilité entre deux scans
+    states = sorted(raw_states, key=lambda s: s.entity_id)
 
     total = len(states)
     disabled = 0
@@ -417,9 +440,12 @@ async def _get_automations_report(hass: HomeAssistant) -> str:
 
 async def _get_scripts_report(hass: HomeAssistant) -> str:
     """Inspecte tous les scripts."""
-    states = hass.states.async_all("script")
-    if not states:
+    raw_states = hass.states.async_all("script")
+    if not raw_states:
         return ""
+
+    # Tri par entity_id pour un résultat stable
+    states = sorted(raw_states, key=lambda s: s.entity_id)
 
     total = len(states)
     problems = []
@@ -442,7 +468,9 @@ async def _get_scripts_report(hass: HomeAssistant) -> str:
 
 async def _get_unavailable_entities(hass: HomeAssistant) -> str:
     """Détecte les entités en état 'unavailable' ou 'unknown'."""
-    all_states = hass.states.async_all()
+    raw_states = hass.states.async_all()
+    # Tri stable par entity_id
+    all_states = sorted(raw_states, key=lambda s: s.entity_id)
     unavailable = []
     unknown = []
 
@@ -482,7 +510,9 @@ async def _get_integration_issues(hass: HomeAssistant) -> str:
         error_states = set()
         retry_states = set()
 
-    entries = hass.config_entries.async_entries()
+    raw_entries = hass.config_entries.async_entries()
+    # Tri stable par domaine et titre
+    entries = sorted(raw_entries, key=lambda e: (getattr(e, "domain", ""), getattr(e, "title", "")))
     failed = []
     not_loaded = []
 
@@ -544,11 +574,16 @@ async def _get_automation_traces(hass: HomeAssistant) -> str:
                 data = json.load(f)
                 if "data" in data and isinstance(data["data"], dict):
                     traces = []
-                    for auto_id, run_list in data["data"].items():
+                    for auto_id, run_list in sorted(data["data"].items(), key=lambda item: str(item[0])):
                         for run in run_list:
-                            # Ne prendre que les erreurs récentes si possible
-                            traces.append(json.dumps(run))
-                    return "\n\n".join(traces[-5:]) # Retourne les 5 plus récentes
+                            traces.append(run)
+                    def _get_ts(r):
+                        try:
+                            return r.get("timestamp", {}).get("start", "")
+                        except Exception:
+                            return ""
+                    traces.sort(key=_get_ts)
+                    return "\n\n".join(json.dumps(t) for t in traces[-5:])
             return ""
             
         traces_str = await hass.async_add_executor_job(read_traces)
