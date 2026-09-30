@@ -145,6 +145,13 @@ perform_update:
       default: true
       selector:
         boolean:
+    backup:
+      name: Create safety backup
+      description: Automatically creates a backup of the integration files before updating.
+      required: false
+      default: true
+      selector:
+        boolean:
 
 install_update:
   name: Install update
@@ -153,6 +160,13 @@ install_update:
     restart:
       name: Restart Home Assistant
       description: Automatically restart Home Assistant after updating.
+      required: false
+      default: true
+      selector:
+        boolean:
+    backup:
+      name: Create safety backup
+      description: Automatically creates a backup of the integration files before updating.
       required: false
       default: true
       selector:

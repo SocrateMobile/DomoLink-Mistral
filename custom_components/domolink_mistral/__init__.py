@@ -82,6 +82,7 @@ DAILY_BRIEFING_SCHEMA = vol.Schema({
 
 UPDATE_SCHEMA = vol.Schema({
     vol.Optional("restart", default=True): cv.boolean,
+    vol.Optional("backup", default=True): cv.boolean,
 })
 
 
