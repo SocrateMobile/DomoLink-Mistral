@@ -9,9 +9,9 @@ DOMAIN = "domolink_mistral"
 _MANIFEST_PATH = os.path.join(os.path.dirname(__file__), "manifest.json")
 try:
     with open(_MANIFEST_PATH, "r", encoding="utf-8") as _f:
-        VERSION = json.load(_f).get("version", "2.9.31")
+        VERSION = json.load(_f).get("version", "unknown")
 except Exception:
-    VERSION = "2.9.32"
+    VERSION = "unknown"
 
 CONF_API_KEY = "api_key"
 CONF_MODEL = "model"
