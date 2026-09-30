@@ -175,6 +175,11 @@ Pour chaque élément, tu dois chercher :
 4. ERREURS SYSTÈME & LOGS : exceptions récurrentes, intégrations plantées, timeouts réseau
 5. OPTIMISATIONS : nettoyages de doublons, simplifications, bonnes pratiques de nommage
 
+RÈGLE FONDAMENTALE SUR LES LIGNES COMMENTÉES (#) :
+- Dans les configurations, templates, automatisations et fichiers YAML, TOUTE ligne ou bloc annoté ou précédé par un dièse '#' est un COMMENTAIRE ou du code volontairement désactivé par l'utilisateur.
+- Tu ne dois JAMAIS considérer ces lignes comme actives.
+- Ne signale AUCUNE anomalie, erreur de syntaxe, entité orpheline ou dépréciation portant sur une ligne ou un bloc commenté avec '#'. Ignore-les intégralement lors de ton analyse.
+
 Tu réponds UNIQUEMENT en JSON valide, sans aucun texte avant ou après."""
 
 USER_PROMPT_TEMPLATE = """Analyse le rapport d'audit Home Assistant ci-dessous et retourne un JSON avec cette structure exacte :
@@ -207,6 +212,8 @@ Règles importantes :
 - Classe les problèmes par gravité décroissante (high en premier).
 - Ne signale pas les messages INFO normaux.
 - Pour les erreurs de syntaxe YAML ou ESPHome, propose la correction exacte dans "manual_fix" et "auto_fix_script".
+- IGNORER STRICTEMENT LES LIGNES COMMENTÉES (#) : Tout élément précédé d'un '#' (code désactivé, commentaires, anciennes configurations, notes) ne doit JAMAIS être considéré comme actif ni générer d'anomalie ou de suggestion de correction.
+- DÉTERMINISME ET REPRODUCTIBILITÉ : Base ton analyse rigoureusement sur les faits concrets du rapport sans spéculer. Génère des identifiants 'id' uniques, stables et standardisés basés sur le fichier/entité et la cause (ex: 'esphome_livingroom_dallas_deprecated', 'yaml_syntax_automations_yaml_line_42'). Si deux scans identiques sont lancés, les anomalies détectées et leurs 'id' doivent être rigoureusement identiques.
 - IMPORTANT JSON : Pour citer des mots, entités ou plateformes dans les textes (title, description, manual_fix), utilise UNIQUEMENT des apostrophes simples '...' (ex: 'dallas' ou 'light.salon') et JAMAIS de guillemets doubles non échappés.
 - Reste synthétique et direct dans chaque description pour garantir une réponse complète sans coupure.
 
@@ -302,7 +309,8 @@ async def analyze_with_mistral(
             {"role": "user", "content": USER_PROMPT_TEMPLATE.format(logs=logs)},
         ],
         "response_format": {"type": "json_object"},
-        "temperature": 0.1,
+        "temperature": 0.0,
+        "random_seed": 42,
         "max_tokens": 8192,
     }
 
