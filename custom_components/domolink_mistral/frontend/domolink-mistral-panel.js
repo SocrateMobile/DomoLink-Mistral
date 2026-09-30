@@ -205,7 +205,7 @@ class DomolinkMistralPanel extends HTMLElement {
     }
   }
 
-  _cleanVersion(v, fallback = "2.9.29") {
+  _cleanVersion(v, fallback = "2.9.30") {
     const s = String(v || fallback).trim().replace(/^[vV]+/, "");
     return s || fallback;
   }
@@ -447,6 +447,21 @@ class DomolinkMistralPanel extends HTMLElement {
       }
       if (this._isApplying && !newStatus.startsWith("⏳")) {
         this._isApplying = false;
+      }
+
+      // Récupération des données complètes et détaillées via WebSocket (non soumises à la limite de 16 Ko du recorder)
+      if (this._hass && this._hass.callWS) {
+        this._hass.callWS({ type: "domolink_mistral/get_issues" }).then((res) => {
+          if (res && Array.isArray(res.issues) && res.issues.length > 0) {
+            const wsIssues = res.issues;
+            const wsIgnored = res.ignored_issues || [];
+            if (JSON.stringify(wsIssues) !== JSON.stringify(this._issues) || wsIgnored.length !== this._ignoredIssues.length) {
+              this._issues = wsIssues;
+              this._ignoredIssues = wsIgnored;
+              this._render();
+            }
+          }
+        }).catch(() => {});
       }
 
       return changed;

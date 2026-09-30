@@ -63,31 +63,78 @@ class DomolinkMistralSensor(SensorEntity):
 
     @property
     def extra_state_attributes(self) -> dict:
-        """Attributs d'état pour le panneau et le dashboard Home Assistant."""
+        """Attributs d'état pour le panneau et le dashboard Home Assistant.
+
+        Garantit que la taille JSON des attributs reste strictement sous le seuil
+        de 16384 octets imposé par l'enregistreur Home Assistant (recorder).
+        """
+        import json
+
         high_count = sum(1 for i in self._issues if i.get("severity") == "high")
         medium_count = sum(1 for i in self._issues if i.get("severity") == "medium")
         low_count = sum(1 for i in self._issues if i.get("severity") == "low")
 
-        compact_issues = [
+        base_attrs = {
+            "high_issues": high_count,
+            "medium_issues": medium_count,
+            "low_issues": low_count,
+            "total_issues": len(self._issues),
+            "ignored_count": len(self._ignored_issues),
+            "last_analysis": self._last_analysis,
+            "current_status": self._current_status,
+            "last_error": self._last_error,
+        }
+
+        # 1. Tester si les données complètes tiennent sous 13000 octets (< 16384 octets recorder)
+        full_candidate = {
+            **base_attrs,
+            "issues": self._issues,
+            "ignored_issues": self._ignored_issues,
+        }
+        try:
+            if len(json.dumps(full_candidate, ensure_ascii=False)) < 13000:
+                return full_candidate
+        except Exception:
+            pass
+
+        # 2. Si trop volumineux, créer une version allégée sans les longs blocs markdown/scripts
+        light_issues = [
+            {
+                "id": str(i.get("id", "")),
+                "title": str(i.get("title", ""))[:80],
+                "severity": i.get("severity", "medium"),
+                "category": i.get("category", "optimization"),
+                "description": str(i.get("description", ""))[:140],
+            }
+            for i in self._issues
+        ]
+        light_ignored = [
             {
                 "id": str(i.get("id", "")),
                 "title": str(i.get("title", ""))[:80],
                 "severity": i.get("severity", "medium"),
             }
-            for i in self._issues[:15]
+            for i in self._ignored_issues
         ]
 
+        candidate_light = {
+            **base_attrs,
+            "issues": light_issues,
+            "ignored_issues": light_ignored,
+        }
+        try:
+            if len(json.dumps(candidate_light, ensure_ascii=False)) < 13000:
+                return candidate_light
+        except Exception:
+            pass
+
+        # 3. Dernier recours : limiter le nombre d'éléments pour garantir le respect de la limite
+        safe_issues = light_issues[:15]
         return {
-            "issues": self._issues,
-            "recent_issues": compact_issues,
-            "ignored_issues": self._ignored_issues,
-            "high_issues": high_count,
-            "medium_issues": medium_count,
-            "low_issues": low_count,
-            "ignored_count": len(self._ignored_issues),
-            "last_analysis": self._last_analysis,
-            "current_status": self._current_status,
-            "last_error": self._last_error,
+            **base_attrs,
+            "issues": safe_issues,
+            "recent_issues": safe_issues,
+            "ignored_issues": light_ignored[:10],
         }
 
     def set_status(self, status: str) -> None:
