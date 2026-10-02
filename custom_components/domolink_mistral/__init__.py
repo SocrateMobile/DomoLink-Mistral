@@ -202,31 +202,31 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         import voluptuous as vol
 
         ws_cmd_type = "domolink_mistral/get_issues"
-        if ws_cmd_type not in websocket_api.async_get_commands(hass):
-            @websocket_api.websocket_command({
-                vol.Required("type"): ws_cmd_type,
-            })
-            @websocket_api.async_response
-            async def ws_get_issues(
-                hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict
-            ) -> None:
-                """Retourne la liste complète et non tronquée des anomalies pour le frontend."""
-                data = hass.data.get(DOMAIN, {}).get(entry.entry_id, {})
-                all_issues = data.get("last_issues", [])
-                ignored_ids = set(data.get("ignored_ids", []))
-                active = [i for i in all_issues if isinstance(i, dict) and i.get("id") not in ignored_ids]
-                ignored = [i for i in all_issues if isinstance(i, dict) and i.get("id") in ignored_ids]
-                connection.send_result(
-                    msg["id"],
-                    {
-                        "issues": active,
-                        "ignored_issues": ignored,
-                    },
-                )
 
-            websocket_api.async_register_command(hass, ws_get_issues)
+        @websocket_api.websocket_command({
+            vol.Required("type"): ws_cmd_type,
+        })
+        @websocket_api.async_response
+        async def ws_get_issues(
+            hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict
+        ) -> None:
+            """Retourne la liste complète et non tronquée des anomalies pour le frontend."""
+            data = hass.data.get(DOMAIN, {}).get(entry.entry_id, {})
+            all_issues = data.get("last_issues", [])
+            ignored_ids = set(data.get("ignored_ids", []))
+            active = [i for i in all_issues if isinstance(i, dict) and i.get("id") not in ignored_ids]
+            ignored = [i for i in all_issues if isinstance(i, dict) and i.get("id") in ignored_ids]
+            connection.send_result(
+                msg["id"],
+                {
+                    "issues": active,
+                    "ignored_issues": ignored,
+                },
+            )
+
+        websocket_api.async_register_command(hass, ws_get_issues)
     except Exception as ws_err:
-        _LOGGER.debug("DomoLink-Mistral: Erreur enregistrement commande WS get_issues: %s", ws_err)
+        _LOGGER.warning("DomoLink-Mistral: Erreur enregistrement commande WS get_issues: %s", ws_err)
 
     # ── Écouteur de mise à jour des options (rechargement à chaud) ──
     entry.async_on_unload(entry.add_update_listener(async_reload_entry))
