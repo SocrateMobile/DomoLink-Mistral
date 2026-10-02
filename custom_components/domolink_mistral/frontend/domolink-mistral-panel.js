@@ -229,9 +229,17 @@ class DomolinkMistralPanel extends HTMLElement {
       const hasUpdate = stateObj.state === "on";
 
       const installed = this._cleanVersion(attrs.installed_version);
-      const latest = this._cleanVersion(attrs.latest_version || attrs.installed_version);
+      // Priorité à latest_version des attributs, ou de l'entité si différente
+      let latest = this._cleanVersion(attrs.latest_version);
+      if (!latest || latest === installed) {
+        if (this._updateInfo && this._updateInfo.latest_version && this._updateInfo.latest_version !== installed) {
+          latest = this._cleanVersion(this._updateInfo.latest_version);
+        } else {
+          latest = installed;
+        }
+      }
 
-      if (!this._updateInfo || this._updateInfo.has_update !== hasUpdate || this._updateInfo.current_version !== installed) {
+      if (!this._updateInfo || this._updateInfo.has_update !== hasUpdate || this._updateInfo.current_version !== installed || this._updateInfo.latest_version !== latest) {
         this._updateInfo = {
           has_update: hasUpdate,
           current_version: installed,
@@ -1224,7 +1232,7 @@ class DomolinkMistralPanel extends HTMLElement {
             </div>
             <div style="font-size: 1.2em;">➔</div>
             <div>
-              <strong>Nouvelle version :</strong> <span style="color: #ff416c; font-weight: bold;">${this._escapeHtml(this._updateInfo.release_tag)}</span>
+              <strong>Nouvelle version :</strong> <span style="color: #ff416c; font-weight: bold;">v${this._cleanVersion(this._escapeHtml(this._updateInfo.latest_version || this._updateInfo.release_tag))}</span>
             </div>
           </div>
 
