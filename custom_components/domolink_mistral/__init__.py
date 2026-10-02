@@ -125,6 +125,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         "store": store,
         "ignored_ids": ignored_ids,
         "last_issues": [],  # Cache des derniers résultats bruts de Mistral
+        "last_report_cache": {"timestamp": 0, "logs": ""},  # Cache court (< 90s) pour reproductibilité des scans consécutifs
         "cancel_listeners": cancel_listeners,  # Pour cleanup au unload
         "analysis_lock": analysis_lock,
     }
@@ -254,7 +255,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 if sensor:
                     sensor.set_status("📊 [1/3] Collecte des données système, logs, automations, scripts...")
 
-                logs = await get_recent_logs(hass)
+                entry_data = hass.data[DOMAIN][entry.entry_id]
+                cache = entry_data.get("last_report_cache", {})
+                now_ts = time.monotonic()
+                if cache.get("logs") and (now_ts - cache.get("timestamp", 0) < 90):
+                    _LOGGER.info("DomoLink-Mistral: Réutilisation du rapport récent (< 90s) pour garantir la reproductibilité parfaite.")
+                    logs = cache["logs"]
+                else:
+                    logs = await get_recent_logs(hass)
+                    if logs:
+                        entry_data["last_report_cache"] = {"timestamp": now_ts, "logs": logs}
 
                 if not logs:
                     _LOGGER.info("DomoLink-Mistral: Aucune donnée à analyser (système sain).")
@@ -431,6 +441,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
             # Si succès et qu'un issue_id a été fourni, retirer l'issue résolue
             data = hass.data[DOMAIN][entry.entry_id]
+            if result.get("success"):
+                data["last_report_cache"] = {"timestamp": 0, "logs": ""}
             if result.get("success") and issue_id and data.get("last_issues"):
                 data["last_issues"] = [i for i in data["last_issues"] if i.get("id") != issue_id]
                 if sensor:
@@ -466,6 +478,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             return
 
         data = hass.data[DOMAIN][entry.entry_id]
+        data["last_report_cache"] = {"timestamp": 0, "logs": ""}
         if issue_id not in data["ignored_ids"]:
             data["ignored_ids"].append(issue_id)
             await data["store"].async_save({"ignored_ids": data["ignored_ids"]})
@@ -484,6 +497,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             return
 
         data = hass.data[DOMAIN][entry.entry_id]
+        data["last_report_cache"] = {"timestamp": 0, "logs": ""}
         if issue_id in data["ignored_ids"]:
             data["ignored_ids"].remove(issue_id)
             await data["store"].async_save({"ignored_ids": data["ignored_ids"]})
@@ -542,7 +556,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             if result.get("success"):
                 fixed_ids.add(issue.get("id"))
 
-        # Retirer les issues résolues
+        # Retirer les issues résolues et invalider le cache de rapport
+        data["last_report_cache"] = {"timestamp": 0, "logs": ""}
         data["last_issues"] = [i for i in data["last_issues"] if i.get("id") not in fixed_ids]
         if sensor:
             sensor.update_issues(data["last_issues"], data["ignored_ids"])

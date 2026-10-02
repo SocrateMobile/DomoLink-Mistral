@@ -118,7 +118,7 @@ async def _get_file_logs(hass: HomeAssistant, lines: int = 200) -> str:
                 # ne décale la fenêtre des derniers logs et ne produise des résultats différents au scan suivant.
                 filtered = [
                     line for line in f
-                    if "domolink_mistral" not in line.lower() and "domolink-mistral" not in line.lower()
+                    if "domolink" not in line.lower()
                 ]
                 return "".join(filtered[-lines:])
 
@@ -588,14 +588,26 @@ async def _get_automation_traces(hass: HomeAssistant) -> str:
                     traces = []
                     for auto_id, run_list in sorted(data["data"].items(), key=lambda item: str(item[0])):
                         for run in run_list:
-                            traces.append(run)
+                            if isinstance(run, dict):
+                                err = run.get("error")
+                                state = run.get("state")
+                                if err or state in ("stopped", "failed", "error"):
+                                    traces.append(run)
                     def _get_ts(r):
                         try:
                             return r.get("timestamp", {}).get("start", "")
                         except Exception:
                             return ""
                     traces.sort(key=_get_ts)
-                    return "\n\n".join(json.dumps(t) for t in traces[-5:])
+                    if not traces:
+                        return ""
+                    formatted = []
+                    for t in traces[-5:]:
+                        item_id = t.get("item_id", "inconnu")
+                        err_msg = t.get("error", "Exécution interrompue ou échouée")
+                        ts = _get_ts(t)
+                        formatted.append(f"- Automation '{item_id}' ({ts}) : {err_msg}")
+                    return "\n".join(formatted)
             return ""
             
         traces_str = await hass.async_add_executor_job(read_traces)

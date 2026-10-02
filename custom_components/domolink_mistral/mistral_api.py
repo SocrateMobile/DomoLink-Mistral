@@ -19,6 +19,149 @@ MISTRAL_MODELS_URL = "https://api.mistral.ai/v1/models"
 API_TIMEOUT = aiohttp.ClientTimeout(total=120)
 
 
+def _normalize_parsed_result(res) -> dict:
+    """Normalise n'importe quelle structure parsée en un dict {'issues': [...]} standard."""
+    if isinstance(res, list):
+        return {"issues": [item for item in res if isinstance(item, dict)]}
+    if isinstance(res, dict):
+        if "issues" in res and isinstance(res["issues"], list):
+            return res
+        for alt_key in ("anomalies", "erreurs", "errors", "problemes", "problems", "findings"):
+            if alt_key in res and isinstance(res[alt_key], list):
+                res["issues"] = res[alt_key]
+                return res
+        if "id" in res:
+            return {"issues": [res]}
+        for val in res.values():
+            if isinstance(val, list) and val and isinstance(val[0], dict) and "id" in val[0]:
+                return {"issues": val}
+        return res
+    return {}
+
+
+def _extract_array_objects(text: str) -> list[str]:
+    """Extrait chirurgicalement chaque bloc JSON {...} d'un tableau sans être perturbé par les accolades imbriquées."""
+    idx_issues = text.find('"issues"')
+    start_bracket = text.find("[", idx_issues if idx_issues != -1 else 0)
+    if start_bracket == -1:
+        start_bracket = text.find("[")
+    if start_bracket == -1:
+        return []
+
+    blocks = []
+    in_str = False
+    esc = False
+    depth = 0
+    start_idx = -1
+
+    for i in range(start_bracket + 1, len(text)):
+        ch = text[i]
+        if esc:
+            esc = False
+            continue
+        if ch == "\\":
+            if in_str:
+                esc = True
+            continue
+        if ch == '"':
+            in_str = not in_str
+            continue
+        if in_str:
+            continue
+
+        if ch == "{":
+            if depth == 0:
+                start_idx = i
+            depth += 1
+        elif ch == "}":
+            if depth > 0:
+                depth -= 1
+                if depth == 0 and start_idx != -1:
+                    blocks.append(text[start_idx : i + 1])
+                    start_idx = -1
+        elif ch == "]" and depth == 0:
+            break
+
+    return blocks
+
+
+def _parse_issue_block(block: str) -> dict:
+    """Parse un bloc d'anomalie unique de façon tolérante même en cas de guillemets mal échappés."""
+    # 1. Tentative directe
+    try:
+        obj = json.loads(block, strict=False)
+        if isinstance(obj, dict) and "id" in obj:
+            return obj
+    except Exception:
+        pass
+
+    # 2. Nettoyage des antislashs et trailing commas
+    try:
+        sanitized = re.sub(r'\\(?![/\"\\bfnrtu])', r'\\\\', block)
+        no_trailing = re.sub(r",\s*([}\]])", r"\1", sanitized)
+        obj = json.loads(no_trailing, strict=False)
+        if isinstance(obj, dict) and "id" in obj:
+            return obj
+    except Exception:
+        pass
+
+    # 3. Extraction ciblée champ par champ pour récupérer l'anomalie intacte
+    issue = {}
+    for field in ["id", "severity", "category", "file"]:
+        m = re.search(r'"' + field + r'"\s*:\s*"([^"]+)"', block)
+        if m:
+            issue[field] = m.group(1).strip()
+
+    m_title = re.search(r'"title"\s*:\s*"(.*?)(?:",|"\s*\n|"\s*})', block)
+    if m_title:
+        issue["title"] = m_title.group(1).strip()
+    else:
+        m_title2 = re.search(r'"title"\s*:\s*"([^"]+)"', block)
+        if m_title2:
+            issue["title"] = m_title2.group(1).strip()
+
+    m_script = re.search(r'"auto_fix_script"\s*:\s*(\[.*?\])', block, re.DOTALL)
+    if m_script:
+        try:
+            issue["auto_fix_script"] = json.loads(m_script.group(1))
+        except Exception:
+            cleaned_s = re.sub(r",\s*([}\]])", r"\1", m_script.group(1))
+            try:
+                issue["auto_fix_script"] = json.loads(cleaned_s)
+            except Exception:
+                issue["auto_fix_script"] = []
+    else:
+        issue["auto_fix_script"] = []
+
+    m_desc = re.search(
+        r'"description"\s*:\s*"(.*?)(?=",\s*"|"\s*,\s*\n\s*"|"\s*,\s*"manual_fix"|"\s*,\s*"auto_fix_script")',
+        block,
+        re.DOTALL,
+    )
+    if m_desc:
+        issue["description"] = m_desc.group(1).strip().replace('\\"', '"')
+    else:
+        m_desc2 = re.search(r'"description"\s*:\s*"(.*?)(?="manual_fix"|"auto_fix_script"|\}\s*$)', block, re.DOTALL)
+        if m_desc2:
+            issue["description"] = m_desc2.group(1).strip().rstrip(",").rstrip('"').strip()
+
+    m_man = re.search(
+        r'"manual_fix"\s*:\s*"(.*?)(?=",\s*"|"\s*,\s*\n\s*"|"\s*,\s*"auto_fix_script"|"\s*\n\s*"auto_fix_script")',
+        block,
+        re.DOTALL,
+    )
+    if m_man:
+        issue["manual_fix"] = m_man.group(1).strip().replace('\\"', '"')
+    else:
+        m_man2 = re.search(r'"manual_fix"\s*:\s*"(.*?)(?="auto_fix_script"|\}\s*$)', block, re.DOTALL)
+        if m_man2:
+            issue["manual_fix"] = m_man2.group(1).strip().rstrip(",").rstrip('"').strip()
+
+    if "id" in issue:
+        return issue
+    return {}
+
+
 def _safe_json_loads(content: str) -> dict:
     """Nettoie et parse de manière ultra-robuste une réponse JSON de Mistral."""
     if not content:
@@ -29,10 +172,9 @@ def _safe_json_loads(content: str) -> dict:
     # 1. Tentative directe
     try:
         res = json.loads(cleaned, strict=False)
-        if isinstance(res, dict):
-            return res
-        if isinstance(res, list):
-            return {"issues": res}
+        norm = _normalize_parsed_result(res)
+        if norm.get("issues"):
+            return norm
     except Exception:
         pass
 
@@ -49,17 +191,15 @@ def _safe_json_loads(content: str) -> dict:
     first_brace = cleaned.find("{")
     first_bracket = cleaned.find("[")
 
-    # Déterminer quel conteneur commence en premier
     if first_bracket != -1 and (first_brace == -1 or first_bracket < first_brace):
         last_bracket = cleaned.rfind("]")
         if last_bracket > first_bracket:
             candidate = cleaned[first_bracket : last_bracket + 1]
             try:
                 res = json.loads(candidate, strict=False)
-                if isinstance(res, list):
-                    return {"issues": res}
-                if isinstance(res, dict):
-                    return res
+                norm = _normalize_parsed_result(res)
+                if norm.get("issues"):
+                    return norm
             except Exception:
                 pass
         cleaned = cleaned[first_bracket:]
@@ -69,12 +209,9 @@ def _safe_json_loads(content: str) -> dict:
             candidate = cleaned[first_brace : last_brace + 1]
             try:
                 res = json.loads(candidate, strict=False)
-                if isinstance(res, dict):
-                    if "issues" not in res and "id" in res:
-                        return {"issues": [res]}
-                    return res
-                if isinstance(res, list):
-                    return {"issues": res}
+                norm = _normalize_parsed_result(res)
+                if norm.get("issues"):
+                    return norm
             except Exception:
                 pass
         cleaned = cleaned[first_brace:]
@@ -83,10 +220,9 @@ def _safe_json_loads(content: str) -> dict:
     sanitized = re.sub(r'\\(?![/\"\\bfnrtu])', r'\\\\', cleaned)
     try:
         res = json.loads(sanitized, strict=False)
-        if isinstance(res, dict):
-            return res
-        if isinstance(res, list):
-            return {"issues": res}
+        norm = _normalize_parsed_result(res)
+        if norm.get("issues"):
+            return norm
     except Exception:
         pass
 
@@ -94,8 +230,9 @@ def _safe_json_loads(content: str) -> dict:
     no_trailing = re.sub(r",\s*([}\]])", r"\1", sanitized)
     try:
         res = json.loads(no_trailing, strict=False)
-        if isinstance(res, dict):
-            return res
+        norm = _normalize_parsed_result(res)
+        if norm.get("issues"):
+            return norm
     except Exception:
         pass
 
@@ -114,15 +251,12 @@ def _safe_json_loads(content: str) -> dict:
 
     repaired = no_trailing.rstrip()
     if in_str:
-        # Fermer la chaîne coupée au milieu d'un nom de clé ou d'une valeur
         repaired += '"'
 
-    # Supprimer les clés orphelines partielles ou sans valeur
     repaired = re.sub(r',\s*"[^"]*"\s*:\s*$', "", repaired)
     repaired = re.sub(r',\s*"[^"]*"\s*$', "", repaired)
     repaired = re.sub(r',\s*([}\]])', r"\1", repaired)
 
-    # Reconstitution de la pile exacte d'accolades et de crochets ouverts
     stack = []
     in_str = False
     esc = False
@@ -149,30 +283,37 @@ def _safe_json_loads(content: str) -> dict:
     repaired_with_closing = repaired + ''.join(reversed(stack))
     try:
         res = json.loads(repaired_with_closing, strict=False)
-        if isinstance(res, dict):
+        norm = _normalize_parsed_result(res)
+        if norm.get("issues"):
             _LOGGER.info("DomoLink-Mistral: Réponse JSON tronquée réparée avec succès.")
-            return res
-        if isinstance(res, list):
-            return {"issues": res}
+            return norm
     except Exception:
         pass
 
-    # 7. Filet de sécurité : extraction regex de chaque bloc d'anomalie {...}
-    issue_objects = []
+    # 7. Filet de sécurité résilient : extraction multi-blocs par équilibrage d'accolades
+    blocks = _extract_array_objects(cleaned)
+    parsed_issues = []
+    for b in blocks:
+        item = _parse_issue_block(b)
+        if item and "id" in item:
+            parsed_issues.append(item)
+
+    if parsed_issues:
+        _LOGGER.info("DomoLink-Mistral: %s anomalies extraites par parsing résilient multi-blocs.", len(parsed_issues))
+        return {"issues": parsed_issues}
+
+    # 8. Filet ultime : regex pour récupérer n'importe quel bloc isolé contenant "id"
     pattern = re.compile(r'\{[^{}]*"id"\s*:\s*"[^"]+"[^{}]*\}', re.DOTALL)
     for m in pattern.finditer(cleaned):
-        try:
-            obj = json.loads(m.group(0), strict=False)
-            if isinstance(obj, dict) and "id" in obj:
-                issue_objects.append(obj)
-        except Exception:
-            pass
+        item = _parse_issue_block(m.group(0))
+        if item and "id" in item and item not in parsed_issues:
+            parsed_issues.append(item)
 
-    if issue_objects:
-        _LOGGER.info("DomoLink-Mistral: %s anomalies extraites par parsing résilient.", len(issue_objects))
-        return {"issues": issue_objects}
+    if parsed_issues:
+        _LOGGER.info("DomoLink-Mistral: %s anomalies extraites via regex de secours.", len(parsed_issues))
+        return {"issues": parsed_issues}
 
-    # 8. En cas d'échec total, lever une erreur explicite avec le début de la réponse pour le débug
+    # 9. En cas d'échec total, lever une erreur explicite avec le début de la réponse pour le débug
     snippet = cleaned[:200] if len(cleaned) > 200 else cleaned
     raise json.JSONDecodeError(f"Contenu non convertible en JSON (extrait: '{snippet}')", cleaned, 0)
 
@@ -226,6 +367,7 @@ Format pour "auto_fix_script" :
 - Si aucune correction automatique sûre n'est possible, mets un tableau vide [].
 
 Règles importantes :
+- EXHAUSTIVITÉ OBLIGATOIRE : Tu DOIS analyser chaque section du rapport et rapporter TOUTES les anomalies réelles détectées sans exception. Ne te limite JAMAIS à un échantillon ou à un seul problème si le rapport en contient plusieurs (ex: plusieurs erreurs de syntaxe YAML, plusieurs périphériques ESPHome avec plateformes dépréciées, entités orphelines ou indisponibles, intégrations en échec, avertissements ou erreurs récurrentes des logs). Retourne la liste intégrale dans le tableau "issues".
 - Classe les problèmes par gravité décroissante (high en premier).
 - Ne signale pas les messages INFO normaux.
 - Pour les erreurs de syntaxe YAML ou ESPHome, propose la correction exacte dans "manual_fix" et "auto_fix_script".
