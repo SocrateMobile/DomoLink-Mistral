@@ -214,8 +214,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 data = hass.data.get(DOMAIN, {}).get(entry.entry_id, {})
                 all_issues = data.get("last_issues", [])
                 ignored_ids = set(data.get("ignored_ids", []))
-                active = [i for i in all_issues if i.get("id") not in ignored_ids]
-                ignored = [i for i in all_issues if i.get("id") in ignored_ids]
+                active = [i for i in all_issues if isinstance(i, dict) and i.get("id") not in ignored_ids]
+                ignored = [i for i in all_issues if isinstance(i, dict) and i.get("id") in ignored_ids]
                 connection.send_result(
                     msg["id"],
                     {
@@ -358,7 +358,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 if sensor:
                     sensor.set_status("📋 [3/3] Traitement et classement des résultats...")
 
-                issues = result.get("issues", [])
+                raw_issues = result.get("issues", []) if isinstance(result, dict) else []
+                if isinstance(raw_issues, dict):
+                    raw_issues = [raw_issues] if "id" in raw_issues else list(raw_issues.values())
+                elif not isinstance(raw_issues, list):
+                    raw_issues = []
+                issues = [i for i in raw_issues if isinstance(i, dict)]
 
                 # Stocker les résultats bruts
                 hass.data[DOMAIN][entry.entry_id]["last_issues"] = issues
@@ -370,9 +375,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
                 # ── Résumé final ──
                 elapsed = round(time.monotonic() - start_time, 1)
-                high_count = sum(1 for i in issues if i.get("severity") == "high")
-                medium_count = sum(1 for i in issues if i.get("severity") == "medium")
-                low_count = sum(1 for i in issues if i.get("severity") == "low")
+                high_count = sum(1 for i in issues if isinstance(i, dict) and i.get("severity") == "high")
+                medium_count = sum(1 for i in issues if isinstance(i, dict) and i.get("severity") == "medium")
+                low_count = sum(1 for i in issues if isinstance(i, dict) and i.get("severity") == "low")
 
                 summary = (
                     f"✅ Analyse terminée en {elapsed}s — "
@@ -444,7 +449,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             if result.get("success"):
                 data["last_report_cache"] = {"timestamp": 0, "logs": ""}
             if result.get("success") and issue_id and data.get("last_issues"):
-                data["last_issues"] = [i for i in data["last_issues"] if i.get("id") != issue_id]
+                data["last_issues"] = [i for i in data["last_issues"] if isinstance(i, dict) and i.get("id") != issue_id]
                 if sensor:
                     sensor.update_issues(data["last_issues"], data["ignored_ids"])
                     sensor.set_status(f"✅ Correctif appliqué avec succès ({result.get('applied')} action(s)).")
@@ -485,8 +490,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
         # Rafraîchir le capteur
         sensor = data.get("sensor")
-        if sensor and data["last_issues"]:
-            sensor.update_issues(data["last_issues"], data["ignored_ids"])
+        if sensor and data.get("last_issues"):
+            sensor.update_issues(data.get("last_issues", []), data["ignored_ids"])
 
         _LOGGER.info("DomoLink-Mistral: Erreur '%s' ignorée.", issue_id)
 
@@ -503,8 +508,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             await data["store"].async_save({"ignored_ids": data["ignored_ids"]})
 
         sensor = data.get("sensor")
-        if sensor and data["last_issues"]:
-            sensor.update_issues(data["last_issues"], data["ignored_ids"])
+        if sensor and data.get("last_issues"):
+            sensor.update_issues(data.get("last_issues", []), data["ignored_ids"])
 
         _LOGGER.info("DomoLink-Mistral: Erreur '%s' réactivée.", issue_id)
 
@@ -521,7 +526,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         fixable = [
             i
             for i in issues
-            if i.get("id") not in ignored
+            if isinstance(i, dict)
+            and i.get("id") not in ignored
             and i.get("auto_fix_script")
             and i["auto_fix_script"] != []
         ]
@@ -558,7 +564,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
         # Retirer les issues résolues et invalider le cache de rapport
         data["last_report_cache"] = {"timestamp": 0, "logs": ""}
-        data["last_issues"] = [i for i in data["last_issues"] if i.get("id") not in fixed_ids]
+        data["last_issues"] = [i for i in data.get("last_issues", []) if isinstance(i, dict) and i.get("id") not in fixed_ids]
         if sensor:
             sensor.update_issues(data["last_issues"], data["ignored_ids"])
             sensor.set_status(f"⚡ All Auto terminé : {total_applied} appliqué(s), {total_skipped} ignoré(s).")
