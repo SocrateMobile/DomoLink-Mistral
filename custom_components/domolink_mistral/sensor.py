@@ -97,14 +97,17 @@ class DomolinkMistralSensor(SensorEntity):
         except Exception:
             pass
 
-        # 2. Si trop volumineux, créer une version allégée sans les longs blocs markdown/scripts
+        # 2. Si trop volumineux, créer une version allégée sans les longs blocs de logs superflus
         light_issues = [
             {
                 "id": str(i.get("id", "")),
                 "title": str(i.get("title", ""))[:80],
                 "severity": i.get("severity", "medium"),
                 "category": i.get("category", "optimization"),
-                "description": str(i.get("description", ""))[:140],
+                "description": str(i.get("description", ""))[:200],
+                "manual_fix": str(i.get("manual_fix", ""))[:300] if i.get("manual_fix") else "",
+                "auto_fix_script": i.get("auto_fix_script", []),
+                "file": i.get("file", ""),
             }
             for i in self._issues
         ]
