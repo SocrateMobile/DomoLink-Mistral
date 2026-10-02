@@ -175,16 +175,19 @@ async def _get_file_logs(hass: HomeAssistant, max_entries: int = 50, max_scan_li
                     grouped[key]["text"] = entry["text"]
 
             formatted_entries = []
-            items = list(grouped.values())[-max_entries:]
+            items = list(grouped.values())[-25:]
             for item in items:
                 count_str = f" (x{item['count']})" if item["count"] > 1 else ""
-                lines = item["text"].splitlines()
+                lines = [l for l in item["text"].splitlines() if l.strip()]
                 first = lines[0]
-                rest = "\n".join(lines[1:])
-                entry_txt = f"{first}{count_str}"
-                if rest.strip():
-                    entry_txt += f"\n{rest}"
-                formatted_entries.append(entry_txt)
+                last_err = ""
+                if len(lines) > 1:
+                    last_line = lines[-1]
+                    if any(last_line.startswith(exc) for exc in ("Exception", "Error", "ValueError", "TypeError", "KeyError", "AttributeError", "TimeoutError", "FileNotFoundError")):
+                        last_err = f"\n  -> Exception: {last_line.strip()}"
+                    elif "Traceback" in item["text"]:
+                        last_err = f"\n  -> Exception: {last_line.strip()}"
+                formatted_entries.append(f"{first}{count_str}{last_err}")
 
             return "\n\n".join(formatted_entries)
 
@@ -373,7 +376,7 @@ async def _analyze_all_yaml_files(hass: HomeAssistant) -> str:
 
             # Ne pas exposer le contenu direct de secrets.yaml (juste valider sa syntaxe)
             is_secrets = os.path.basename(current_path) == "secrets.yaml"
-            res = _check_yaml_syntax_and_read(current_path, max_lines=50 if is_secrets else 120)
+            res = _check_yaml_syntax_and_read(current_path, max_lines=40 if is_secrets else 60)
 
             rel_path = os.path.relpath(current_path, config_dir)
             if not res["valid"]:
