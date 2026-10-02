@@ -405,16 +405,17 @@ RÈGLE FONDAMENTALE SUR LES LIGNES COMMENTÉES (#) :
 
 Tu réponds UNIQUEMENT en JSON valide, sans aucun texte avant ou après."""
 
-USER_PROMPT_TEMPLATE = """Analyse le rapport d'audit Home Assistant ci-dessous et retourne un JSON avec cette structure exacte :
+USER_PROMPT_TEMPLATE = """Tu es l'auditeur expert de Home Assistant.
+Analyse le rapport technique ci-dessous et retourne la liste COMPLÈTE de TOUTES les anomalies détectées dans un objet JSON avec cette structure exacte :
 {{
   "issues": [
     {{
-      "id": "identifiant_unique_sans_espace",
+      "id": "identifiant_stable_sans_espace",
       "severity": "high|medium|low",
       "category": "yaml_syntax|esphome|blueprint|automation|script|integration|entity|log_error|optimization",
       "title": "Titre court et clair du problème",
-      "description": "Explication détaillée : quel fichier ou entité est concerné, pourquoi c'est un problème, et quel est l'impact.",
-      "manual_fix": "Instructions pas-à-pas numérotées pour résoudre le problème manuellement (fichiers précis à ouvrir, lignes à modifier, code exact à coller).",
+      "description": "Explication directe en 1-2 phrases : quel composant/fichier est en cause et quel est l'impact.",
+      "manual_fix": "Instructions pas-à-pas concises en 2 à 4 étapes claires. Ne recopie JAMAIS de gros fichiers complets pour ne pas saturer la réponse.",
       "auto_fix_script": [
         {{
           "domain": "domaine_ha",
@@ -431,17 +432,28 @@ Format pour "auto_fix_script" :
 - Pour une correction dans un fichier YAML : {{"action_type": "yaml_edit", "file": "automations.yaml", "find": "ancien_texte_a_remplacer", "replace": "nouveau_texte_corrige"}}
 - Si aucune correction automatique sûre n'est possible, mets un tableau vide [].
 
-Règles importantes :
-- EXHAUSTIVITÉ OBLIGATOIRE : Tu DOIS analyser chaque section du rapport et rapporter TOUTES les anomalies réelles détectées sans exception. Ne te limite JAMAIS à un échantillon ou à un seul problème si le rapport en contient plusieurs (ex: plusieurs erreurs de syntaxe YAML, plusieurs périphériques ESPHome avec plateformes dépréciées, entités orphelines ou indisponibles, intégrations en échec, avertissements ou erreurs récurrentes des logs). Retourne la liste intégrale dans le tableau "issues".
-- Classe les problèmes par gravité décroissante (high en premier).
-- Ne signale pas les messages INFO normaux.
-- Pour les erreurs de syntaxe YAML ou ESPHome, propose la correction exacte dans "manual_fix" et "auto_fix_script".
-- IGNORER STRICTEMENT LES LIGNES COMMENTÉES (#) : Tout élément précédé d'un '#' (code désactivé, commentaires, anciennes configurations, notes) ne doit JAMAIS être considéré comme actif ni générer d'anomalie ou de suggestion de correction.
-- DÉTERMINISME ET REPRODUCTIBILITÉ : Base ton analyse rigoureusement sur les faits concrets du rapport sans spéculer. Génère des identifiants 'id' uniques, stables et standardisés basés sur le fichier/entité et la cause (ex: 'esphome_livingroom_dallas_deprecated', 'yaml_syntax_automations_yaml_line_42'). Si deux scans identiques sont lancés, les anomalies détectées et leurs 'id' doivent être rigoureusement identiques.
-- IMPORTANT JSON : Pour citer des mots, entités ou plateformes dans les textes (title, description, manual_fix), utilise UNIQUEMENT des apostrophes simples '...' (ex: 'dallas' ou 'light.salon') et JAMAIS de guillemets doubles non échappés.
-- Reste synthétique et direct dans chaque description pour garantir une réponse complète sans coupure.
+RÈGLES D'AUDIT CRUCIALES :
+1. COUVERTURE EXHAUSTIVE DE TOUTES LES SECTIONS DU RAPPORT :
+   Tu DOIS inspecter chaque section du rapport et extraire TOUS les problèmes réels :
+   - Fichiers YAML & syntaxe (ex: blocs sensors invalides, clés manquantes)
+   - ESPHome Builder (ex: plateformes dépréciées 'dallas', 'captive_portal' absent)
+   - Erreurs et avertissements des logs et de system_log (ex: notify file, unique_id dupliqués, template warnings, erreurs de traces)
+   - Intégrations en erreur ou en attente
+   - Entités indisponibles ou inconnues (regroupe les entités d'un même équipement déconnecté en une anomalie dédiée)
+   - Automations et scripts (automations désactivées par inadvertance ou jamais exécutées)
+   Ne te limite JAMAIS à la première catégorie trouvée (ex: ne t'arrête pas au YAML) ! Rapporte TOUTES les anomalies détectées dans le tableau "issues".
 
-Voici le rapport complet de l'instance Home Assistant :
+2. CONCISION POUR ÉVITER LA TRONCATURE :
+   - "manual_fix" doit faire 2 à 4 étapes concises. Ne colle pas de gros blocs de code complets afin de laisser de la place pour rapporter toutes les autres anomalies du système.
+   - "description" : 1 à 2 phrases directes et percutantes.
+
+3. DÉTERMINISME ET REPRODUCTIBILITÉ :
+   - Base ton analyse rigoureusement sur les faits concrets du rapport sans spéculer.
+   - Génère des 'id' uniques, stables et standardisés (ex: 'yaml_syntax_configuration_yaml_sensors_invalid', 'esphome_dallas_deprecated', 'log_error_notify_file_failed').
+   - IGNORER STRICTEMENT LES LIGNES COMMENTÉES (#) : Tout élément précédé d'un '#' ne doit JAMAIS générer d'anomalie.
+   - IMPORTANT JSON : Pour citer des termes ou entités dans les textes, utilise UNIQUEMENT des apostrophes simples '...' et JAMAIS de guillemets doubles non échappés.
+
+Voici le rapport technique complet de l'instance Home Assistant :
 ```
 {logs}
 ```"""

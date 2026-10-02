@@ -94,8 +94,12 @@ def sanitize_logs(log_content: str) -> str:
 # SECTION 1 : Extraction des logs
 # ═══════════════════════════════════════════════════════
 
-async def _get_file_logs(hass: HomeAssistant, lines: int = 200) -> str:
-    """Lit les dernières lignes du journal Home Assistant (home-assistant.log)."""
+async def _get_file_logs(hass: HomeAssistant, max_entries: int = 50, max_scan_lines: int = 5000) -> str:
+    """Extrait intelligemment les erreurs, avertissements et exceptions récentes de home-assistant.log.
+
+    Ignore le bruit de fond DEBUG et les messages de routine INFO (ex: trames Zigbee, actualisations fréquentes),
+    pour garantir que les erreurs et avertissements réels ne sont jamais poussés hors du rapport par le trafic normal.
+    """
     candidates = [
         hass.config.path("home-assistant.log"),
         hass.config.path("homeassistant.log"),
@@ -112,19 +116,81 @@ async def _get_file_logs(hass: HomeAssistant, lines: int = 200) -> str:
         return ""
 
     try:
-        def read_tail():
-            with open(log_file, "r", encoding="utf-8", errors="replace") as f:
-                # Filtrer les logs générés par DomoLink-Mistral lui-même afin d'éviter qu'un scan précédent
-                # ne décale la fenêtre des derniers logs et ne produise des résultats différents au scan suivant.
-                filtered = [
-                    line for line in f
-                    if "domolink" not in line.lower()
-                ]
-                return "".join(filtered[-lines:])
+        def read_errors_and_warnings():
+            from collections import OrderedDict
 
-        content = await hass.async_add_executor_job(read_tail)
+            ansi_re = re.compile(r"\x1b\[[0-9;]*[a-zA-Z]")
+            entry_pattern = re.compile(
+                r"^(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}(?:\.\d+)?)\s+(DEBUG|INFO|WARNING|ERROR|CRITICAL)\s+(\[[^\]]+\]|\([^\)]+\))\s*(.*)$"
+            )
+
+            with open(log_file, "r", encoding="utf-8", errors="replace") as f:
+                all_lines = f.readlines()
+                recent_lines = all_lines[-max_scan_lines:] if len(all_lines) > max_scan_lines else all_lines
+
+            entries = []
+            current_block = []
+            current_level = None
+            current_logger = None
+
+            for raw_line in recent_lines:
+                line = ansi_re.sub("", raw_line).rstrip()
+                if "domolink_mistral" in line.lower():
+                    continue
+
+                m = entry_pattern.match(line)
+                if m:
+                    if current_block and current_level in ("WARNING", "ERROR", "CRITICAL"):
+                        entries.append({
+                            "level": current_level,
+                            "logger": current_logger or "unknown",
+                            "text": "\n".join(current_block),
+                        })
+                    current_level = m.group(2)
+                    current_logger = m.group(3)
+                    current_block = [line]
+                else:
+                    if current_block:
+                        current_block.append(line)
+
+            if current_block and current_level in ("WARNING", "ERROR", "CRITICAL"):
+                entries.append({
+                    "level": current_level,
+                    "logger": current_logger or "unknown",
+                    "text": "\n".join(current_block),
+                })
+
+            if not entries:
+                return "Aucune erreur ou avertissement récent dans home-assistant.log."
+
+            grouped = OrderedDict()
+            for entry in entries:
+                first_line = entry["text"].splitlines()[0]
+                clean_sig = re.sub(r"^\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}(?:\.\d+)?\s+", "", first_line)
+                key = (entry["level"], entry["logger"], clean_sig)
+                if key not in grouped:
+                    grouped[key] = {"count": 1, "text": entry["text"]}
+                else:
+                    grouped[key]["count"] += 1
+                    grouped[key]["text"] = entry["text"]
+
+            formatted_entries = []
+            items = list(grouped.values())[-max_entries:]
+            for item in items:
+                count_str = f" (x{item['count']})" if item["count"] > 1 else ""
+                lines = item["text"].splitlines()
+                first = lines[0]
+                rest = "\n".join(lines[1:])
+                entry_txt = f"{first}{count_str}"
+                if rest.strip():
+                    entry_txt += f"\n{rest}"
+                formatted_entries.append(entry_txt)
+
+            return "\n\n".join(formatted_entries)
+
+        content = await hass.async_add_executor_job(read_errors_and_warnings)
         if content:
-            _LOGGER.debug("DomoLink-Mistral: %s lignes lues depuis %s", lines, os.path.basename(log_file))
+            _LOGGER.debug("DomoLink-Mistral: Erreurs extraites depuis %s", os.path.basename(log_file))
             return content
     except Exception as e:
         _LOGGER.error("DomoLink-Mistral: Erreur lecture %s: %s", log_file, e)
@@ -168,8 +234,8 @@ async def _get_system_log(hass: HomeAssistant) -> str:
                 exc = getattr(record, "exception", "")
                 count = getattr(record, "count", 1)
 
-            # Ignorer les propres logs de domolink pour garantir la reproductibilité
-            if "domolink_mistral" in str(name).lower() or "domolink" in str(name).lower():
+            # Ignorer uniquement les propres logs de DomoLink-Mistral pour éviter les boucles d'auto-analyse
+            if "domolink_mistral" in str(name).lower():
                 continue
 
             if isinstance(message, list):
@@ -633,11 +699,11 @@ async def get_recent_logs(hass: HomeAssistant, lines: int = 200) -> str:
     if yaml_report:
         sections.append(yaml_report)
 
-    # 3. Logs fichier
-    _LOGGER.info("DomoLink-Mistral: [3/9] Lecture de homeassistant.log...")
-    file_logs = await _get_file_logs(hass, lines)
+    # 3. Logs fichier (Erreurs & avertissements récents sans pollution debug)
+    _LOGGER.info("DomoLink-Mistral: [3/9] Extraction des erreurs de homeassistant.log...")
+    file_logs = await _get_file_logs(hass)
     if file_logs:
-        sections.append(f"=== HOMEASSISTANT.LOG (dernières {lines} lignes) ===\n{file_logs}")
+        sections.append(f"=== HOMEASSISTANT.LOG (Erreurs & Avertissements récents) ===\n{file_logs}")
 
     # 4. System log structuré
     _LOGGER.info("DomoLink-Mistral: [4/9] Lecture du system_log structuré...")
