@@ -39,6 +39,11 @@ class DomolinkMistralPanel extends HTMLElement {
     this._confirmData = null;
     this._initialized = false;
     this._repairFilter = "all"; // "all" | "high" | "medium" | "low"
+    this._hasWsLoaded = false;
+    this._lastWsAnalysis = null;
+    this._lastWsFetch = 0;
+    this._wsFetchInProgress = false;
+    this._renderPending = false;
 
     // Système de mise à jour
     this._updateInfo = null;
@@ -193,6 +198,15 @@ class DomolinkMistralPanel extends HTMLElement {
     return null;
   }
 
+  _scheduleRender() {
+    if (this._renderPending) return;
+    this._renderPending = true;
+    requestAnimationFrame(() => {
+      this._renderPending = false;
+      this._render();
+    });
+  }
+
   set hass(hass) {
     const isFirst = !this._hass && hass;
     this._hass = hass;
@@ -205,7 +219,7 @@ class DomolinkMistralPanel extends HTMLElement {
 
       if (!this._initialized || changed) {
         this._initialized = true;
-        this._render();
+        this._scheduleRender();
         this._injectSidebarBadge();
       }
     } catch (err) {
@@ -424,32 +438,60 @@ class DomolinkMistralPanel extends HTMLElement {
       const newLastError = attrs.last_error || null;
       const newIssues = attrs.issues || attrs.recent_issues || [];
       const newIgnored = attrs.ignored_issues || [];
+      const newIgnoredCount = attrs.ignored_count !== undefined ? attrs.ignored_count : newIgnored.length;
 
-      const changed = (
-        newLast !== this._lastAnalysis ||
-        newStatus !== this._currentStatus ||
-        newLastError !== this._lastError ||
-        newIssues.length !== this._issues.length ||
-        newIgnored.length !== this._ignoredIssues.length
-      );
+      let changed = false;
 
-      this._issues = newIssues;
-      this._ignoredIssues = newIgnored;
-      this._lastAnalysis = newLast;
-      this._currentStatus = newStatus;
-      this._lastError = newLastError;
+      // 1. Détection d'une nouvelle analyse terminée (changement de timestamp)
+      const isNewAnalysis = (newLast && newLast !== this._lastAnalysis);
+      if (isNewAnalysis) {
+        this._lastAnalysis = newLast;
+        this._hasWsLoaded = false; // Forcer le rechargement WebSocket pour avoir la liste complète
+        changed = true;
+      }
+
+      // 2. Détection d'un changement de statut en direct
+      if (newStatus !== this._currentStatus) {
+        this._currentStatus = newStatus;
+        changed = true;
+      }
+
+      // 3. Détection d'un changement d'erreur
+      if (newLastError !== this._lastError) {
+        this._lastError = newLastError;
+        changed = true;
+      }
+
+      // 4. Gestion des anomalies (priorité absolue aux données complètes WebSocket)
+      if (!this._hasWsLoaded) {
+        // Avant que le WebSocket ne réponde : initialiser temporairement avec les attributs du sensor
+        if (newIssues.length !== this._issues.length || newIgnored.length !== this._ignoredIssues.length) {
+          this._issues = newIssues;
+          this._ignoredIssues = newIgnored;
+          changed = true;
+        }
+      } else {
+        // WebSocket déjà chargé : NE JAMAIS ré-écraser avec les données tronquées du recorder !
+        // Si le nombre d'anomalies ignorées a changé côté Home Assistant, redemander les données à jour
+        if (newIgnoredCount !== this._ignoredIssues.length) {
+          this._hasWsLoaded = false;
+          changed = true;
+        }
+      }
 
       // Arrêter les spinners
       if (this._isAnalyzing && (newStatus.includes("terminée") || newStatus.includes("Erreur") || newStatus.includes("✅") || newStatus.includes("❌") || newStatus.includes("🚫"))) {
         this._isAnalyzing = false;
+        changed = true;
       }
       if (this._isApplying && !newStatus.startsWith("⏳")) {
         this._isApplying = false;
+        changed = true;
       }
 
-      // Récupération des données complètes et détaillées via WebSocket avec throttling (max 1 appel / 15s sauf changement d'analyse)
+      // 5. Récupération des données complètes et détaillées via WebSocket avec throttling
       const now = Date.now();
-      const shouldFetchWS = changed || !this._lastWsFetch || (now - this._lastWsFetch > 15000);
+      const shouldFetchWS = (!this._hasWsLoaded) || isNewAnalysis || (!this._lastWsFetch) || (now - this._lastWsFetch > 30000);
       if (this._hass && this._hass.callWS && shouldFetchWS && !this._wsFetchInProgress) {
         this._lastWsFetch = now;
         this._wsFetchInProgress = true;
@@ -458,10 +500,13 @@ class DomolinkMistralPanel extends HTMLElement {
           if (res && Array.isArray(res.issues)) {
             const wsIssues = res.issues;
             const wsIgnored = res.ignored_issues || [];
+            this._hasWsLoaded = true;
+            this._lastWsAnalysis = newLast;
+            // Ne re-rendre QUE si les anomalies WebSocket diffèrent de l'état affiché
             if (JSON.stringify(wsIssues) !== JSON.stringify(this._issues) || wsIgnored.length !== this._ignoredIssues.length) {
               this._issues = wsIssues;
               this._ignoredIssues = wsIgnored;
-              this._render();
+              this._scheduleRender();
             }
           }
         }).catch(() => {
@@ -528,6 +573,8 @@ class DomolinkMistralPanel extends HTMLElement {
   }
 
   _render() {
+    const winScroll = window.scrollY || document.documentElement.scrollTop || 0;
+    const selfScroll = this.scrollTop || (this.parentElement ? this.parentElement.scrollTop : 0) || 0;
     const root = this.shadowRoot;
     root.innerHTML = `
       <style>
@@ -746,6 +793,14 @@ class DomolinkMistralPanel extends HTMLElement {
     `;
 
     this._attachEvents();
+
+    if (winScroll > 0) {
+      window.scrollTo(0, winScroll);
+    }
+    if (selfScroll > 0) {
+      this.scrollTop = selfScroll;
+      if (this.parentElement) this.parentElement.scrollTop = selfScroll;
+    }
   }
 
   _renderErrorBanner() {
