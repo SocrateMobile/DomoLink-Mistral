@@ -276,6 +276,7 @@ async def _analyze_all_yaml_files(hass: HomeAssistant) -> str:
     def _collect_yaml_data():
         nonlocal all_findings, discovered_files, yaml_syntax_errors
         findings = []
+        yaml_excerpts = []
 
         # ── 1. configuration.yaml et includes récursifs ──
         config_yaml_path = os.path.join(config_dir, "configuration.yaml")
@@ -314,6 +315,13 @@ async def _analyze_all_yaml_files(hass: HomeAssistant) -> str:
                 findings.append(f"🔴 [ERREUR SYNTAXE] {rel_path} :\n  {res['error']}")
             else:
                 findings.append(f"📄 {rel_path} ({res['lines_count']} lignes) - Syntaxe OK")
+
+            # BUG-MAJ-04 FIX: Transmettre un extrait assaini des fichiers fonctionnels clés (automations, scripts, configuration)
+            base_filename = os.path.basename(current_path)
+            if not is_secrets and base_filename in ("automations.yaml", "automation.yaml", "scripts.yaml", "script.yaml", "configuration.yaml"):
+                excerpt = res.get("content_excerpt", "").strip()
+                if excerpt:
+                    yaml_excerpts.append(f"--- Fichier: {rel_path} ---\n{excerpt}")
 
             # Chercher les includes imbriqués
             if res.get("content_excerpt") and not is_secrets:
@@ -373,10 +381,10 @@ async def _analyze_all_yaml_files(hass: HomeAssistant) -> str:
                     status_str = f" ({', '.join(notes)})" if notes else " (OK)"
                     esphome_devices.append(f"⚡ ESPHome Device '{dev_name}' ({rel_esp}){status_str}")
 
-        return findings, esphome_devices, yaml_syntax_errors
+        return findings, esphome_devices, yaml_syntax_errors, yaml_excerpts
 
     try:
-        findings, esphome_devices, syntax_errors = await hass.async_add_executor_job(_collect_yaml_data)
+        findings, esphome_devices, syntax_errors, excerpts = await hass.async_add_executor_job(_collect_yaml_data)
 
         report = []
         if syntax_errors:
@@ -388,6 +396,10 @@ async def _analyze_all_yaml_files(hass: HomeAssistant) -> str:
         report.extend(findings[:50])
         if len(findings) > 50:
             report.append(f"  ... et {len(findings) - 50} autres fichiers analysés")
+
+        if excerpts:
+            report.append("\n=== EXTRAITS DE CODE YAML POUR ANALYSE SÉMANTIQUE ===")
+            report.extend(excerpts)
 
         if esphome_devices:
             report.append("\n=== PÉRIPHÉRIQUES ESPHOME BUILDER ===")
@@ -657,7 +669,8 @@ async def get_recent_logs(hass: HomeAssistant, lines: int = 200) -> str:
         _LOGGER.warning("DomoLink-Mistral: Aucune donnée collectée.")
         return ""
 
-    combined = "\n\n" + "═" * 60 + "\n\n".join(sections)
+    separator = "\n\n" + "═" * 60 + "\n\n"
+    combined = separator.join(sections)
     _LOGGER.info(
         "DomoLink-Mistral: Collecte terminée — %s sections, %s caractères au total.",
         len(sections), len(combined),

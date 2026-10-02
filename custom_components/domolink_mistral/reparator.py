@@ -20,29 +20,31 @@ _LOGGER = logging.getLogger(__name__)
 
 
 async def trigger_backup(hass: HomeAssistant) -> bool:
-    """Déclenche une sauvegarde de sécurité avant d'appliquer une modification."""
+    """Déclenche une sauvegarde de sécurité bloquante avant d'appliquer une modification."""
     try:
-        # HA 2023.x+ : service natif backup.create (lancé sans bloquer pour éviter les timeouts)
+        # HA 2023.x+ : service natif backup.create avec attente de complétion (blocking=True)
         if hass.services.has_service("backup", "create"):
-            await hass.services.async_call("backup", "create", {}, blocking=False)
-            _LOGGER.info("DomoLink-Mistral: Sauvegarde système lancée en arrière-plan.")
+            _LOGGER.info("DomoLink-Mistral: Déclenchement de la sauvegarde système préalable (blocking=True)...")
+            await hass.services.async_call("backup", "create", {}, blocking=True)
+            _LOGGER.info("DomoLink-Mistral: Sauvegarde système préalable complétée avec succès.")
             return True
 
-        # Ancienne méthode via Hass.io / Supervisor
+        # Méthode via Hass.io / Supervisor
         if hass.services.has_service("hassio", "backup_full"):
-            await hass.services.async_call("hassio", "backup_full", {}, blocking=False)
-            _LOGGER.info("DomoLink-Mistral: Sauvegarde Supervisor lancée en arrière-plan.")
+            _LOGGER.info("DomoLink-Mistral: Déclenchement de la sauvegarde Supervisor préalable (blocking=True)...")
+            await hass.services.async_call("hassio", "backup_full", {}, blocking=True)
+            _LOGGER.info("DomoLink-Mistral: Sauvegarde Supervisor complétée avec succès.")
             return True
 
         _LOGGER.debug(
-            "DomoLink-Mistral: Aucun service de backup global. "
-            "La correction sera sécurisée par le backup local .bak."
+            "DomoLink-Mistral: Aucun service de backup global disponible. "
+            "La sécurité s'appuiera sur la copie locale atomique .bak."
         )
         return True
 
     except Exception as e:
-        _LOGGER.warning("DomoLink-Mistral: Erreur lors de la sauvegarde globale: %s (backup local .bak actif)", e)
-        return True
+        _LOGGER.error("DomoLink-Mistral: Échec critique de la sauvegarde système: %s", e)
+        return False
 
 
 def _is_service_allowed(domain: str, service: str) -> bool:
@@ -126,10 +128,15 @@ def _apply_yaml_file_fix(hass: HomeAssistant, file_rel_path: str, find_text: str
             with open(target_path, "r", encoding="utf-8") as f:
                 original = f.read()
 
-            if not find_text or find_text not in original:
+            # Normalisation systématique des fins de ligne (\r\n -> \n) pour compatibilité tous OS
+            original_norm = original.replace("\r\n", "\n")
+            find_norm = find_text.replace("\r\n", "\n") if find_text else ""
+            replace_norm = replace_text.replace("\r\n", "\n") if replace_text else ""
+
+            if not find_norm or find_norm not in original_norm:
                 return {"success": False, "reason": f"Texte cible non trouvé dans {file_rel_path}"}
 
-            occurrences = original.count(find_text)
+            occurrences = original_norm.count(find_norm)
             if occurrences > 1:
                 _LOGGER.warning("DomoLink-Mistral: Le texte cible apparaît %s fois dans %s", occurrences, file_rel_path)
                 return {
@@ -137,8 +144,8 @@ def _apply_yaml_file_fix(hass: HomeAssistant, file_rel_path: str, find_text: str
                     "reason": f"Texte cible ambigu (trouvé {occurrences} fois dans {file_rel_path}), modification annulée par sécurité",
                 }
 
-            # Remplacement ciblé de l'unique occurrence
-            updated = original.replace(find_text, replace_text or "", 1)
+            # Remplacement ciblé de l'unique occurrence sur le contenu normalisé
+            updated = original_norm.replace(find_norm, replace_norm, 1)
 
         # 2. Validation stricte de la syntaxe YAML avant toute modification ou création de backup
         try:
@@ -169,10 +176,19 @@ def _apply_yaml_file_fix(hass: HomeAssistant, file_rel_path: str, find_text: str
             except Exception as e:
                 return {"success": False, "reason": f"Échec de la sauvegarde préalable: {e}"}
 
-            # Enregistrer pour le rollback
-            if "domolink_mistral_rollbacks" not in hass.data:
-                hass.data["domolink_mistral_rollbacks"] = []
-            hass.data["domolink_mistral_rollbacks"].append({"file": target_path, "backup": backup_path})
+            # Enregistrer pour le rollback sous le namespace DOMAIN cloisonné
+            from .const import DOMAIN
+            domain_data = hass.data.setdefault(DOMAIN, {})
+            # Stockage dans le premier entry_id disponible ou sous _rollbacks dans le namespace DOMAIN
+            rollbacks_list = None
+            for key, val in domain_data.items():
+                if isinstance(val, dict) and "rollbacks" in val:
+                    rollbacks_list = val["rollbacks"]
+                    break
+            if rollbacks_list is None:
+                domain_data.setdefault("_rollbacks", [])
+                rollbacks_list = domain_data["_rollbacks"]
+            rollbacks_list.append({"file": target_path, "backup": backup_path})
 
         # 4. Écriture atomique sécurisée via fichier temporaire avec préservation des droits chmod
         import tempfile
@@ -201,10 +217,19 @@ def _apply_yaml_file_fix(hass: HomeAssistant, file_rel_path: str, find_text: str
 
 async def rollback_latest_fix(hass: HomeAssistant) -> dict:
     """Annule la dernière modification YAML."""
-    rollbacks = hass.data.get("domolink_mistral_rollbacks", [])
+    from .const import DOMAIN
+    domain_data = hass.data.get(DOMAIN, {})
+    rollbacks = None
+    for key, val in domain_data.items():
+        if isinstance(val, dict) and "rollbacks" in val:
+            rollbacks = val["rollbacks"]
+            break
+    if rollbacks is None:
+        rollbacks = domain_data.get("_rollbacks", [])
+
     if not rollbacks:
         return {"success": False, "reason": "Aucune sauvegarde de fichier récente en mémoire."}
-        
+
     last_rollback = rollbacks.pop()
     target_path = last_rollback["file"]
     backup_path = last_rollback["backup"]
@@ -437,10 +462,14 @@ async def append_automation_to_yaml(hass: HomeAssistant, automation_yaml: str) -
 
     res = await hass.async_add_executor_job(_do_append)
     if res.get("success"):
-        # Recharger les automations
+        # Recharger les automations de manière protégée
         if hass.services.has_service("automation", "reload"):
-            await hass.services.async_call("automation", "reload", {}, blocking=True)
-            res["message"] = "Automation injectée et rechargée avec succès dans Home Assistant !"
+            try:
+                await hass.services.async_call("automation", "reload", {}, blocking=True)
+                res["message"] = "Automation injectée et rechargée avec succès dans Home Assistant !"
+            except Exception as reload_err:
+                _LOGGER.warning("DomoLink-Mistral: Automation écrite mais échec du rechargement à chaud: %s", reload_err)
+                res["message"] = f"Automation enregistrée, mais le rechargement a échoué ({reload_err}). Vérifiez la syntaxe globale."
         else:
             res["message"] = "Automation enregistrée dans automations.yaml."
 

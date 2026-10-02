@@ -160,6 +160,14 @@ class DomolinkMistralPanel extends HTMLElement {
       this._sidebarObserver.disconnect();
       this._sidebarObserver = null;
     }
+    if (this._onModalMove) {
+      document.removeEventListener("mousemove", this._onModalMove);
+      this._onModalMove = null;
+    }
+    if (this._onModalUp) {
+      document.removeEventListener("mouseup", this._onModalUp);
+      this._onModalUp = null;
+    }
     this._unsubscribeEvents();
   }
 
@@ -339,24 +347,6 @@ class DomolinkMistralPanel extends HTMLElement {
           entityIds: ["update.domolink_mistralia", "update.domolink_mistral", "update.domolink_mistral_mise_a_jour"],
           hasUpdate: hasUpdate,
         },
-        {
-          key: "domolink_alarm",
-          patterns: ["domolink_alarm", "domolink-alarm"],
-          entityIds: ["update.domolink_alarm", "update.domolink_alarm_mise_a_jour"],
-          hasUpdate: undefined,
-        },
-        {
-          key: "domolink_backup",
-          patterns: ["domolink_backup", "domolink-backup"],
-          entityIds: ["update.domolink_backup", "update.domolink_backup_mise_a_jour"],
-          hasUpdate: undefined,
-        },
-        {
-          key: "flipr_pool",
-          patterns: ["flipr_pool", "flipr-pool", "flipr-pool-control", "flipr"],
-          entityIds: ["update.flipr_pool_control", "update.flipr_pool", "update.flipr_pool_mise_a_jour"],
-          hasUpdate: undefined,
-        },
       ];
 
       const container = sidebar.shadowRoot.querySelector("paper-listbox, ha-md-list, nav, div.menu, div.items");
@@ -449,10 +439,15 @@ class DomolinkMistralPanel extends HTMLElement {
         this._isApplying = false;
       }
 
-      // Récupération des données complètes et détaillées via WebSocket (non soumises à la limite de 16 Ko du recorder)
-      if (this._hass && this._hass.callWS) {
+      // Récupération des données complètes et détaillées via WebSocket avec throttling (max 1 appel / 15s sauf changement d'analyse)
+      const now = Date.now();
+      const shouldFetchWS = changed || !this._lastWsFetch || (now - this._lastWsFetch > 15000);
+      if (this._hass && this._hass.callWS && shouldFetchWS && !this._wsFetchInProgress) {
+        this._lastWsFetch = now;
+        this._wsFetchInProgress = true;
         this._hass.callWS({ type: "domolink_mistral/get_issues" }).then((res) => {
-          if (res && Array.isArray(res.issues) && res.issues.length > 0) {
+          this._wsFetchInProgress = false;
+          if (res && Array.isArray(res.issues)) {
             const wsIssues = res.issues;
             const wsIgnored = res.ignored_issues || [];
             if (JSON.stringify(wsIssues) !== JSON.stringify(this._issues) || wsIgnored.length !== this._ignoredIssues.length) {
@@ -461,7 +456,9 @@ class DomolinkMistralPanel extends HTMLElement {
               this._render();
             }
           }
-        }).catch(() => {});
+        }).catch(() => {
+          this._wsFetchInProgress = false;
+        });
       }
 
       return changed;
@@ -1006,16 +1003,25 @@ class DomolinkMistralPanel extends HTMLElement {
         ${this._showIgnored && this._ignoredIssues.length > 0 ? `
           <div style="margin-top: 30px;">
             <h3>Erreurs ignorées</h3>
-            ${this._ignoredIssues.map(id => `
+            ${this._ignoredIssues.map(item => {
+              const issueId = typeof item === 'object' && item !== null ? (item.id || "") : String(item);
+              const issueTitle = typeof item === 'object' && item !== null ? (item.title || issueId) : issueId;
+              return `
               <div class="issue-card" style="opacity: 0.7;">
-                <div style="display: flex; justify-content: space-between; align-items: center;">
-                  <span>ID : <code>${this._escapeHtml(id)}</code></span>
-                  <button class="btn btn-secondary btn-unignore" data-id="${this._escapeHtml(id)}">
+                <div style="display: flex; justify-content: space-between; align-items: center; gap: 12px;">
+                  <div>
+                    <strong>${this._escapeHtml(issueTitle)}</strong>
+                    <div style="font-size: 0.85em; color: var(--secondary-text-color); margin-top: 2px;">
+                      ID : <code>${this._escapeHtml(issueId)}</code>
+                    </div>
+                  </div>
+                  <button class="btn btn-secondary btn-unignore" data-id="${this._escapeHtml(issueId)}">
                     ↩️ Réactiver
                   </button>
                 </div>
               </div>
-            `).join("")}
+              `;
+            }).join("")}
           </div>
         ` : ""}
       </div>
@@ -1488,6 +1494,30 @@ class DomolinkMistralPanel extends HTMLElement {
       });
     }
 
+    // Rollback Latest Fix
+    const btnRollback = root.getElementById("btn-rollback");
+    if (btnRollback) {
+      btnRollback.addEventListener("click", () => {
+        this._confirmData = {
+          title: "⏪ Annuler la dernière modification YAML ?",
+          message: "Le fichier modifié lors du dernier correctif sera restauré à partir de sa copie de sauvegarde (.bak).",
+          onConfirm: () => {
+            this._isApplying = true;
+            this._render();
+            this._hass.callService("domolink_mistral", "rollback_latest_fix", {}).then(() => {
+              this._isApplying = false;
+              this._render();
+            }).catch((err) => {
+              this._isApplying = false;
+              this._lastError = err?.message || "Erreur lors du rollback";
+              this._render();
+            });
+          }
+        };
+        this._render();
+      });
+    }
+
     // Toggle Ignored
     const btnToggleIgnored = root.getElementById("btn-toggle-ignored");
     if (btnToggleIgnored) {
@@ -1760,16 +1790,32 @@ class DomolinkMistralPanel extends HTMLElement {
         this._isDragging = true;
         this._dragOffset = { x: e.clientX - modal.offsetLeft, y: e.clientY - modal.offsetTop };
         e.preventDefault();
+
+        if (this._onModalMove) document.removeEventListener("mousemove", this._onModalMove);
+        if (this._onModalUp) document.removeEventListener("mouseup", this._onModalUp);
+
+        this._onModalMove = (moveEvt) => {
+          if (!this._isDragging) return;
+          this._modalPos = { x: moveEvt.clientX - this._dragOffset.x, y: moveEvt.clientY - this._dragOffset.y };
+          modal.style.left = this._modalPos.x + "px";
+          modal.style.top = this._modalPos.y + "px";
+        };
+
+        this._onModalUp = () => {
+          this._isDragging = false;
+          if (this._onModalMove) {
+            document.removeEventListener("mousemove", this._onModalMove);
+            this._onModalMove = null;
+          }
+          if (this._onModalUp) {
+            document.removeEventListener("mouseup", this._onModalUp);
+            this._onModalUp = null;
+          }
+        };
+
+        document.addEventListener("mousemove", this._onModalMove);
+        document.addEventListener("mouseup", this._onModalUp);
       });
-      const onMove = (e) => {
-        if (!this._isDragging) return;
-        this._modalPos = { x: e.clientX - this._dragOffset.x, y: e.clientY - this._dragOffset.y };
-        modal.style.left = this._modalPos.x + "px";
-        modal.style.top = this._modalPos.y + "px";
-      };
-      const onUp = () => { this._isDragging = false; };
-      document.addEventListener("mousemove", onMove);
-      document.addEventListener("mouseup", onUp);
     }
   }
 }
@@ -1780,16 +1826,7 @@ class DomolinkMistralPanel extends HTMLElement {
 function launchSocrateRulesEasterEgg(targetRoot) {
   if (targetRoot.getElementById?.("socrate-rules-overlay") || targetRoot.querySelector?.("#socrate-rules-overlay")) return;
 
-  // 1. Inject fonts in document head if not present
-  if (!document.getElementById("socrate-rules-fonts")) {
-    const fontLink = document.createElement("link");
-    fontLink.id = "socrate-rules-fonts";
-    fontLink.rel = "stylesheet";
-    fontLink.href = "https://fonts.googleapis.com/css2?family=Orbitron:wght@500;900&family=Poppins:wght@300;600&display=swap";
-    document.head.appendChild(fontLink);
-  }
-
-  // 2. Create fullscreen overlay
+  // 1. Create fullscreen overlay (uses local system fonts for privacy/offline compliance)
   const overlay = document.createElement("div");
   overlay.id = "socrate-rules-overlay";
   overlay.innerHTML = `

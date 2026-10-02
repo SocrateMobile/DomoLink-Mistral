@@ -124,23 +124,86 @@ class DomolinkMistralConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             ),
         )
 
+    async def async_step_reauth(
+        self, entry_data: dict[str, Any]
+    ) -> ConfigFlowResult:
+        """Déclenche la réauthentification suite à une clé révoquée ou invalide."""
+        return await self.async_step_reauth_confirm()
+
+    async def async_step_reauth_confirm(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Confirme la nouvelle clé API lors de la réauthentification."""
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            new_key = user_input.get(CONF_API_KEY, "").strip()
+            try:
+                await validate_api_key(self.hass, new_key)
+                entry = self.hass.config_entries.async_get_entry(self.context.get("entry_id"))
+                if entry:
+                    self.hass.config_entries.async_update_entry(
+                        entry,
+                        data={**entry.data, CONF_API_KEY: new_key},
+                    )
+                    await self.hass.config_entries.async_reload(entry.entry_id)
+                    return self.async_abort(reason="reauth_successful")
+            except InvalidAuth:
+                errors["base"] = "invalid_auth"
+            except CannotConnect:
+                errors["base"] = "cannot_connect"
+            except Exception:
+                errors["base"] = "unknown"
+
+        return self.async_show_form(
+            step_id="reauth_confirm",
+            data_schema=vol.Schema({vol.Required(CONF_API_KEY): str}),
+            errors=errors,
+        )
+
     @staticmethod
     def async_get_options_flow(
         config_entry: config_entries.ConfigEntry,
     ) -> config_entries.OptionsFlow:
         """Crée le gestionnaire d'options."""
-        return DomolinkMistralOptionsFlowHandler()
+        return DomolinkMistralOptionsFlowHandler(config_entry)
 
 
 class DomolinkMistralOptionsFlowHandler(config_entries.OptionsFlow):
     """Gère la modification des paramètres post-installation."""
 
+    def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
+        """Initialise le gestionnaire d'options."""
+        self._config_entry = config_entry
+
+    @property
+    def config_entry(self) -> config_entries.ConfigEntry:
+        """Retourne la configuration actuelle."""
+        return self._config_entry
+
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
     ) -> OptionsFlowResult:
         """Gère les options modifiables."""
+        errors: dict[str, str] = {}
         if user_input is not None:
-            return self.async_create_entry(title="", data=user_input)
+            # Si une nouvelle clé API est saisie, la valider et l'enregistrer dans config_entry.data
+            new_api_key = user_input.pop(CONF_API_KEY, "").strip()
+            if new_api_key and new_api_key != self.config_entry.data.get(CONF_API_KEY, ""):
+                try:
+                    await validate_api_key(self.hass, new_api_key)
+                    self.hass.config_entries.async_update_entry(
+                        self.config_entry,
+                        data={**self.config_entry.data, CONF_API_KEY: new_api_key},
+                    )
+                except InvalidAuth:
+                    errors[CONF_API_KEY] = "invalid_auth"
+                except CannotConnect:
+                    errors[CONF_API_KEY] = "cannot_connect"
+                except Exception:
+                    errors["base"] = "unknown"
+
+            if not errors:
+                return self.async_create_entry(title="", data=user_input)
 
         current_options = self.config_entry.options
         current_model = current_options.get(CONF_MODEL, DEFAULT_MODEL)
@@ -148,11 +211,13 @@ class DomolinkMistralOptionsFlowHandler(config_entries.OptionsFlow):
             current_model = DEFAULT_MODEL
         current_mode = current_options.get(CONF_SCAN_MODE, "live")
         current_freq = current_options.get(CONF_SCAN_FREQUENCY, 1)
+        current_api_key = self.config_entry.data.get(CONF_API_KEY, "")
 
         return self.async_show_form(
             step_id="init",
             data_schema=vol.Schema(
                 {
+                    vol.Optional(CONF_API_KEY, default=current_api_key): str,
                     vol.Required(CONF_MODEL, default=current_model): vol.In(MODELS),
                     vol.Required(CONF_SCAN_MODE, default=current_mode): vol.In(
                         list(SCAN_MODES.keys())
@@ -162,6 +227,7 @@ class DomolinkMistralOptionsFlowHandler(config_entries.OptionsFlow):
                     ),
                 }
             ),
+            errors=errors,
         )
 
 
