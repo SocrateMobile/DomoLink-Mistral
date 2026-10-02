@@ -29,18 +29,37 @@ README_PATH = os.path.join(ROOT_DIR, "README.md")
 
 
 def get_token() -> str:
-    """Retrieve GitHub token from environment or osxkeychain or git remote."""
+    """Retrieve GitHub token from environment or git credential helper."""
     token = os.environ.get("GITHUB_TOKEN")
     if token:
         return token
+    # Essayer le helper de credentials standard de git (compatible cross-platform)
     try:
-        cmd = "printf 'protocol=https\\nhost=github.com\\n' | git credential-osxkeychain get"
-        out = subprocess.check_output(cmd, shell=True, text=True)
+        p = subprocess.Popen(
+            ["git", "credential", "fill"],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        out, _ = p.communicate(input="protocol=https\nhost=github.com\n", timeout=5)
         for line in out.splitlines():
             if line.startswith("password="):
                 return line.split("=", 1)[1]
     except Exception:
         pass
+
+    # Fallback macOS spécifique si disponible
+    if sys.platform == "darwin":
+        try:
+            cmd = "printf 'protocol=https\\nhost=github.com\\n' | git credential-osxkeychain get"
+            out = subprocess.check_output(cmd, shell=True, text=True)
+            for line in out.splitlines():
+                if line.startswith("password="):
+                    return line.split("=", 1)[1]
+        except Exception:
+            pass
+
     try:
         remote = (
             subprocess.check_output(
@@ -128,14 +147,13 @@ def create_github_release(new_ver: str, release_notes: str, token: str) -> None:
             res = json.loads(resp.read().decode("utf-8"))
             print(f"GitHub Release created successfully: {res.get('html_url')}")
             return
-    except ssl.SSLError:
-        fallback_ctx = ssl.create_default_context()
-        fallback_ctx.check_hostname = False
-        fallback_ctx.verify_mode = ssl.CERT_NONE
-        with urllib.request.urlopen(req, context=fallback_ctx) as resp:
-            res = json.loads(resp.read().decode("utf-8"))
-            print(f"GitHub Release created successfully: {res.get('html_url')}")
-            return
+    except ssl.SSLError as ssl_err:
+        print(f"SSL verification failed: {ssl_err}")
+        print("Please verify your system CA certificates (e.g. certifi). Release aborted for security.")
+        sys.exit(1)
+    except urllib.error.HTTPError as http_err:
+        print(f"HTTP Error {http_err.code}: {http_err.read().decode('utf-8', errors='replace')}")
+        sys.exit(1)
 
 
 def main() -> None:

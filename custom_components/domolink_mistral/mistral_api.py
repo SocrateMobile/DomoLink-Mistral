@@ -45,21 +45,36 @@ def _safe_json_loads(content: str) -> dict:
             cleaned = cleaned[:-3]
         cleaned = cleaned.strip()
 
-    # 3. Extraction entre le premier "{" et le dernier "}" de niveau racine
+    # 3. Extraction entre le premier délimiteur racine ("{" ou "[") et son correspondant final
     first_brace = cleaned.find("{")
-    last_brace = cleaned.rfind("}")
-    if first_brace != -1 and last_brace > first_brace:
-        candidate = cleaned[first_brace : last_brace + 1]
-        try:
-            res = json.loads(candidate, strict=False)
-            if isinstance(res, dict):
-                return res
-            if isinstance(res, list):
-                return {"issues": res}
-        except Exception:
-            pass
+    first_bracket = cleaned.find("[")
 
-    if first_brace != -1:
+    # Déterminer quel conteneur commence en premier
+    if first_bracket != -1 and (first_brace == -1 or first_bracket < first_brace):
+        last_bracket = cleaned.rfind("]")
+        if last_bracket > first_bracket:
+            candidate = cleaned[first_bracket : last_bracket + 1]
+            try:
+                res = json.loads(candidate, strict=False)
+                if isinstance(res, list):
+                    return {"issues": res}
+                if isinstance(res, dict):
+                    return res
+            except Exception:
+                pass
+        cleaned = cleaned[first_bracket:]
+    elif first_brace != -1:
+        last_brace = cleaned.rfind("}")
+        if last_brace > first_brace:
+            candidate = cleaned[first_brace : last_brace + 1]
+            try:
+                res = json.loads(candidate, strict=False)
+                if isinstance(res, dict):
+                    return res
+                if isinstance(res, list):
+                    return {"issues": res}
+            except Exception:
+                pass
         cleaned = cleaned[first_brace:]
 
     # 4. Correction des antislashs non valides en JSON (ex: \s, \d, \w, regex, chemins)

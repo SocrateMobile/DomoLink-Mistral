@@ -165,7 +165,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         )
 
     panel_file = os.path.join(frontend_dir, "domolink-mistral-panel.js")
-    mtime = int(os.path.getmtime(panel_file)) if os.path.exists(panel_file) else 0
+    def _get_mtime():
+        return int(os.path.getmtime(panel_file)) if os.path.exists(panel_file) else 0
+
+    mtime = await hass.async_add_executor_job(_get_mtime)
 
     def _register_sidebar_panel(has_update: bool = False):
         title = "DomoLink-Mistral IA 🔴" if has_update else "DomoLink-Mistral IA"
@@ -197,28 +200,30 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         from homeassistant.components import websocket_api
         import voluptuous as vol
 
-        @websocket_api.websocket_command({
-            vol.Required("type"): "domolink_mistral/get_issues",
-        })
-        @websocket_api.async_response
-        async def ws_get_issues(
-            hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict
-        ) -> None:
-            """Retourne la liste complète et non tronquée des anomalies pour le frontend."""
-            data = hass.data.get(DOMAIN, {}).get(entry.entry_id, {})
-            all_issues = data.get("last_issues", [])
-            ignored_ids = set(data.get("ignored_ids", []))
-            active = [i for i in all_issues if i.get("id") not in ignored_ids]
-            ignored = [i for i in all_issues if i.get("id") in ignored_ids]
-            connection.send_result(
-                msg["id"],
-                {
-                    "issues": active,
-                    "ignored_issues": ignored,
-                },
-            )
+        ws_cmd_type = "domolink_mistral/get_issues"
+        if ws_cmd_type not in websocket_api.async_get_commands(hass):
+            @websocket_api.websocket_command({
+                vol.Required("type"): ws_cmd_type,
+            })
+            @websocket_api.async_response
+            async def ws_get_issues(
+                hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict
+            ) -> None:
+                """Retourne la liste complète et non tronquée des anomalies pour le frontend."""
+                data = hass.data.get(DOMAIN, {}).get(entry.entry_id, {})
+                all_issues = data.get("last_issues", [])
+                ignored_ids = set(data.get("ignored_ids", []))
+                active = [i for i in all_issues if i.get("id") not in ignored_ids]
+                ignored = [i for i in all_issues if i.get("id") in ignored_ids]
+                connection.send_result(
+                    msg["id"],
+                    {
+                        "issues": active,
+                        "ignored_issues": ignored,
+                    },
+                )
 
-        websocket_api.async_register_command(hass, ws_get_issues)
+            websocket_api.async_register_command(hass, ws_get_issues)
     except Exception as ws_err:
         _LOGGER.debug("DomoLink-Mistral: Erreur enregistrement commande WS get_issues: %s", ws_err)
 
