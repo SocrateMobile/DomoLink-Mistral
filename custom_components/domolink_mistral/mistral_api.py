@@ -20,23 +20,88 @@ API_TIMEOUT = aiohttp.ClientTimeout(total=120)
 
 
 def _normalize_parsed_result(res) -> dict:
-    """Normalise n'importe quelle structure parsée en un dict {'issues': [...]} standard."""
+    """Normalise n'importe quelle structure parsée en un dict {'issues': [dict, ...]} standard et sécurisé."""
+    if not res:
+        return {"issues": []}
+
+    # 1. Si res est directement une liste
     if isinstance(res, list):
-        return {"issues": [item for item in res if isinstance(item, dict)]}
+        normalized = []
+        for item in res:
+            if isinstance(item, dict):
+                normalized.append(item)
+            elif isinstance(item, str) and item.strip():
+                normalized.append({
+                    "id": f"text_issue_{len(normalized) + 1}",
+                    "title": item[:80],
+                    "severity": "medium",
+                    "category": "optimization",
+                    "description": item,
+                    "manual_fix": "Vérifier la configuration manuellement.",
+                    "auto_fix_script": [],
+                })
+        return {"issues": normalized}
+
+    # 2. Si res est un dictionnaire
     if isinstance(res, dict):
-        if "issues" in res and isinstance(res["issues"], list):
-            return res
-        for alt_key in ("anomalies", "erreurs", "errors", "problemes", "problems", "findings"):
-            if alt_key in res and isinstance(res[alt_key], list):
-                res["issues"] = res[alt_key]
-                return res
-        if "id" in res:
+        raw_issues = None
+        for key in ("issues", "anomalies", "erreurs", "errors", "problemes", "problems", "findings"):
+            if key in res:
+                raw_issues = res[key]
+                break
+
+        # Si aucune clé trouvée, mais que res est lui-même une anomalie unique
+        if raw_issues is None and "id" in res:
             return {"issues": [res]}
-        for val in res.values():
-            if isinstance(val, list) and val and isinstance(val[0], dict) and "id" in val[0]:
-                return {"issues": val}
-        return res
-    return {}
+
+        # Si aucune clé trouvée, chercher une valeur qui soit une liste ou un dict d'anomalies
+        if raw_issues is None:
+            for val in res.values():
+                if isinstance(val, list) and val and isinstance(val[0], dict) and "id" in val[0]:
+                    raw_issues = val
+                    break
+                elif isinstance(val, dict) and "id" in val:
+                    raw_issues = [val]
+                    break
+
+        normalized_list = []
+        if isinstance(raw_issues, list):
+            for item in raw_issues:
+                if isinstance(item, dict):
+                    normalized_list.append(item)
+                elif isinstance(item, str) and item.strip():
+                    normalized_list.append({
+                        "id": f"text_issue_{len(normalized_list) + 1}",
+                        "title": item[:80],
+                        "severity": "medium",
+                        "category": "optimization",
+                        "description": item,
+                        "manual_fix": "Vérifier la configuration manuellement.",
+                        "auto_fix_script": [],
+                    })
+        elif isinstance(raw_issues, dict):
+            # Si "issues" est un dict unique : {"issues": {"id": "...", ...}}
+            if "id" in raw_issues:
+                normalized_list.append(raw_issues)
+            else:
+                # Ou un dict de dicts : {"issues": {"issue1": {...}, "issue2": {...}}}
+                for item in raw_issues.values():
+                    if isinstance(item, dict):
+                        normalized_list.append(item)
+        elif isinstance(raw_issues, str) and raw_issues.strip():
+            normalized_list.append({
+                "id": "text_issue_1",
+                "title": raw_issues[:80],
+                "severity": "medium",
+                "category": "optimization",
+                "description": raw_issues,
+                "manual_fix": "Vérifier la configuration manuellement.",
+                "auto_fix_script": [],
+            })
+
+        return {"issues": normalized_list}
+
+    return {"issues": []}
 
 
 def _extract_array_objects(text: str) -> list[str]:
@@ -173,7 +238,7 @@ def _safe_json_loads(content: str) -> dict:
     try:
         res = json.loads(cleaned, strict=False)
         norm = _normalize_parsed_result(res)
-        if norm.get("issues"):
+        if isinstance(norm, dict) and "issues" in norm and isinstance(norm["issues"], list):
             return norm
     except Exception:
         pass
@@ -198,7 +263,7 @@ def _safe_json_loads(content: str) -> dict:
             try:
                 res = json.loads(candidate, strict=False)
                 norm = _normalize_parsed_result(res)
-                if norm.get("issues"):
+                if isinstance(norm, dict) and "issues" in norm and isinstance(norm["issues"], list):
                     return norm
             except Exception:
                 pass
@@ -210,7 +275,7 @@ def _safe_json_loads(content: str) -> dict:
             try:
                 res = json.loads(candidate, strict=False)
                 norm = _normalize_parsed_result(res)
-                if norm.get("issues"):
+                if isinstance(norm, dict) and "issues" in norm and isinstance(norm["issues"], list):
                     return norm
             except Exception:
                 pass
@@ -221,7 +286,7 @@ def _safe_json_loads(content: str) -> dict:
     try:
         res = json.loads(sanitized, strict=False)
         norm = _normalize_parsed_result(res)
-        if norm.get("issues"):
+        if isinstance(norm, dict) and "issues" in norm and isinstance(norm["issues"], list):
             return norm
     except Exception:
         pass
@@ -231,7 +296,7 @@ def _safe_json_loads(content: str) -> dict:
     try:
         res = json.loads(no_trailing, strict=False)
         norm = _normalize_parsed_result(res)
-        if norm.get("issues"):
+        if isinstance(norm, dict) and "issues" in norm and isinstance(norm["issues"], list):
             return norm
     except Exception:
         pass
@@ -284,7 +349,7 @@ def _safe_json_loads(content: str) -> dict:
     try:
         res = json.loads(repaired_with_closing, strict=False)
         norm = _normalize_parsed_result(res)
-        if norm.get("issues"):
+        if isinstance(norm, dict) and "issues" in norm and isinstance(norm["issues"], list):
             _LOGGER.info("DomoLink-Mistral: Réponse JSON tronquée réparée avec succès.")
             return norm
     except Exception:
@@ -500,9 +565,13 @@ async def analyze_with_mistral(
             content = data["choices"][0]["message"]["content"]
             result = _safe_json_loads(content)
 
-            if "issues" not in result:
+            if not isinstance(result, dict):
                 result = {"issues": []}
+            elif "issues" not in result or not isinstance(result.get("issues"), list):
+                result["issues"] = []
 
+            # Garantir strictement que chaque élément de issues est un dictionnaire
+            result["issues"] = [i for i in result["issues"] if isinstance(i, dict)]
             result["success"] = True
 
             # Sauvegarde automatique du rapport JSON et de la réponse brute dans /config/

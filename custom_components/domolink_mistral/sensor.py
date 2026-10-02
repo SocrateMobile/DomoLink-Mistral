@@ -70,16 +70,19 @@ class DomolinkMistralSensor(SensorEntity):
         """
         import json
 
-        high_count = sum(1 for i in self._issues if i.get("severity") == "high")
-        medium_count = sum(1 for i in self._issues if i.get("severity") == "medium")
-        low_count = sum(1 for i in self._issues if i.get("severity") == "low")
+        valid_issues = [i for i in (self._issues or []) if isinstance(i, dict)]
+        valid_ignored = [i for i in (self._ignored_issues or []) if isinstance(i, dict)]
+
+        high_count = sum(1 for i in valid_issues if i.get("severity") == "high")
+        medium_count = sum(1 for i in valid_issues if i.get("severity") == "medium")
+        low_count = sum(1 for i in valid_issues if i.get("severity") == "low")
 
         base_attrs = {
             "high_issues": high_count,
             "medium_issues": medium_count,
             "low_issues": low_count,
-            "total_issues": len(self._issues),
-            "ignored_count": len(self._ignored_issues),
+            "total_issues": len(valid_issues),
+            "ignored_count": len(valid_ignored),
             "last_analysis": self._last_analysis,
             "current_status": self._current_status,
             "last_error": self._last_error,
@@ -88,8 +91,8 @@ class DomolinkMistralSensor(SensorEntity):
         # 1. Tester si les données complètes tiennent sous 13000 octets (< 16384 octets recorder)
         full_candidate = {
             **base_attrs,
-            "issues": self._issues,
-            "ignored_issues": self._ignored_issues,
+            "issues": valid_issues,
+            "ignored_issues": valid_ignored,
         }
         try:
             if len(json.dumps(full_candidate, ensure_ascii=False)) < 13000:
@@ -109,7 +112,7 @@ class DomolinkMistralSensor(SensorEntity):
                 "auto_fix_script": i.get("auto_fix_script", []),
                 "file": i.get("file", ""),
             }
-            for i in self._issues
+            for i in valid_issues
         ]
         light_ignored = [
             {
@@ -117,7 +120,7 @@ class DomolinkMistralSensor(SensorEntity):
                 "title": str(i.get("title", ""))[:80],
                 "severity": i.get("severity", "medium"),
             }
-            for i in self._ignored_issues
+            for i in valid_ignored
         ]
 
         candidate_light = {
@@ -156,9 +159,10 @@ class DomolinkMistralSensor(SensorEntity):
     def update_issues(self, issues: list, ignored_ids: list | None = None) -> None:
         """Met à jour les problèmes détectés et conserve l'historique complet dans hass.data."""
         ignored_ids = ignored_ids or []
+        safe_issues = [i for i in (issues or []) if isinstance(i, dict)]
 
-        self._issues = [i for i in issues if i.get("id") not in ignored_ids]
-        self._ignored_issues = [i for i in issues if i.get("id") in ignored_ids]
+        self._issues = [i for i in safe_issues if i.get("id") not in ignored_ids]
+        self._ignored_issues = [i for i in safe_issues if i.get("id") in ignored_ids]
         self._state = len(self._issues)
         self._last_analysis = dt_util.now().isoformat()
         self._last_error = None
