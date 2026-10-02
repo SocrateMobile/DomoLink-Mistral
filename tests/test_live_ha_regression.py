@@ -27,6 +27,12 @@ HEADERS = {
     "Content-Type": "application/json"
 }
 
+import json
+import os
+
+with open(os.path.join(os.path.dirname(__file__), "..", "custom_components", "domolink_mistral", "manifest.json")) as _f:
+    EXPECTED_VERSION = json.load(_f)["version"]
+
 results = []
 
 def record(test_name, passed, detail=""):
@@ -41,8 +47,8 @@ async def run_tests():
             async with session.get(f"{BASE_URL}/states/update.domolink_mistral_ia_mise_a_jour", ssl=ssl_ctx) as resp:
                 data = await resp.json()
                 version = data["attributes"]["installed_version"]
-                passed = version == "2.9.39"
-                record("Test 1: Version installée", passed, f"Version = {version}")
+                passed = version == EXPECTED_VERSION
+                record("Test 1: Version installée", passed, f"Version = {version} (attendu: {EXPECTED_VERSION})")
         except Exception as e:
             record("Test 1: Version installée", False, str(e))
 
@@ -53,7 +59,7 @@ async def run_tests():
                 resp_data = data.get("service_response", {})
                 has_up = resp_data.get("has_update")
                 cur_v = resp_data.get("current_version")
-                passed = (has_up is False) and (cur_v == "2.9.39")
+                passed = (has_up is False) and (cur_v == EXPECTED_VERSION)
                 record("Test 2: Service check_update", passed, f"current_version={cur_v}, has_update={has_up}")
         except Exception as e:
             record("Test 2: Service check_update", False, str(e))
