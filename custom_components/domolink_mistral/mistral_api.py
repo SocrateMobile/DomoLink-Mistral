@@ -70,6 +70,8 @@ def _safe_json_loads(content: str) -> dict:
             try:
                 res = json.loads(candidate, strict=False)
                 if isinstance(res, dict):
+                    if "issues" not in res and "id" in res:
+                        return {"issues": [res]}
                     return res
                 if isinstance(res, list):
                     return {"issues": res}
