@@ -20,31 +20,65 @@ _LOGGER = logging.getLogger(__name__)
 
 
 async def trigger_backup(hass: HomeAssistant) -> bool:
-    """Déclenche une sauvegarde de sécurité bloquante avant d'appliquer une modification."""
+    """Déclenche une sauvegarde de sécurité avant d'appliquer une modification.
+    
+    Tente une sauvegarde globale via Home Assistant ou Supervisor (avec timeout de sécurité).
+    Si le service de backup global échoue ou n'est pas configuré sur l'instance,
+    la réparation se poursuit en toute sécurité grâce aux copies locales atomiques (.bak)
+    et au mécanisme de rollback instantané gérés par _apply_yaml_file_fix.
+    """
+    import asyncio
     try:
-        # HA 2023.x+ : service natif backup.create avec attente de complétion (blocking=True)
+        # HA 2023.x+ : service natif backup.create
         if hass.services.has_service("backup", "create"):
-            _LOGGER.info("DomoLink-Mistral: Déclenchement de la sauvegarde système préalable (blocking=True)...")
-            await hass.services.async_call("backup", "create", {}, blocking=True)
-            _LOGGER.info("DomoLink-Mistral: Sauvegarde système préalable complétée avec succès.")
-            return True
+            _LOGGER.info("DomoLink-Mistral: Déclenchement de la sauvegarde système préalable...")
+            try:
+                # Timeout de 45 secondes pour ne pas bloquer indéfiniment l'interface utilisateur
+                await asyncio.wait_for(
+                    hass.services.async_call("backup", "create", {}, blocking=True),
+                    timeout=45.0
+                )
+                _LOGGER.info("DomoLink-Mistral: Sauvegarde système préalable complétée avec succès.")
+                return True
+            except (asyncio.TimeoutError, Exception) as be:
+                _LOGGER.warning(
+                    "DomoLink-Mistral: Le service backup.create a échoué ou a dépassé le délai (%s). "
+                    "Poursuite avec la sauvegarde locale atomique (.bak).",
+                    be
+                )
+                return True
 
         # Méthode via Hass.io / Supervisor
         if hass.services.has_service("hassio", "backup_full"):
-            _LOGGER.info("DomoLink-Mistral: Déclenchement de la sauvegarde Supervisor préalable (blocking=True)...")
-            await hass.services.async_call("hassio", "backup_full", {}, blocking=True)
-            _LOGGER.info("DomoLink-Mistral: Sauvegarde Supervisor complétée avec succès.")
-            return True
+            _LOGGER.info("DomoLink-Mistral: Déclenchement de la sauvegarde Supervisor préalable...")
+            try:
+                await asyncio.wait_for(
+                    hass.services.async_call("hassio", "backup_full", {}, blocking=True),
+                    timeout=45.0
+                )
+                _LOGGER.info("DomoLink-Mistral: Sauvegarde Supervisor complétée avec succès.")
+                return True
+            except (asyncio.TimeoutError, Exception) as se:
+                _LOGGER.warning(
+                    "DomoLink-Mistral: Le service hassio.backup_full a échoué ou a dépassé le délai (%s). "
+                    "Poursuite avec la sauvegarde locale atomique (.bak).",
+                    se
+                )
+                return True
 
         _LOGGER.debug(
-            "DomoLink-Mistral: Aucun service de backup global disponible. "
+            "DomoLink-Mistral: Aucun service de backup global actif. "
             "La sécurité s'appuiera sur la copie locale atomique .bak."
         )
         return True
 
     except Exception as e:
-        _LOGGER.error("DomoLink-Mistral: Échec critique de la sauvegarde système: %s", e)
-        return False
+        _LOGGER.warning(
+            "DomoLink-Mistral: Impossible d'exécuter la sauvegarde système globale: %s. "
+            "Poursuite sécurisée via la copie locale .bak.",
+            e
+        )
+        return True
 
 
 def _is_service_allowed(domain: str, service: str) -> bool:

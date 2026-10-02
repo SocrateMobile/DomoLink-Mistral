@@ -751,16 +751,28 @@ class DomolinkMistralPanel extends HTMLElement {
   _renderErrorBanner() {
     if (!this._lastError && !(this._currentStatus && this._currentStatus.startsWith("❌"))) return "";
     const errorText = this._lastError || this._currentStatus.replace(/^❌\s*/, "");
-    const isRateLimit = errorText.includes("429") || errorText.toLowerCase().includes("too many requests") || errorText.toLowerCase().includes("quota");
+    const lower = errorText.toLowerCase();
+    const isRateLimit = lower.includes("429") || lower.includes("too many requests") || lower.includes("quota");
+    const isBackupOrSystem = lower.includes("sauvegarde") || lower.includes("backup") || lower.includes("fichier") || lower.includes("yaml") || lower.includes("permission");
+
+    let errorTitle = "Erreur de communication avec Mistral AI";
+    let helpTip = "💡 Vérifiez votre connexion internet ou votre clé API dans les paramètres de l'intégration.";
+
+    if (isRateLimit) {
+      errorTitle = "Limite de requêtes Mistral AI atteinte (HTTP 429 : Too Many Requests)";
+    } else if (isBackupOrSystem) {
+      errorTitle = "Avertissement Système / Sauvegarde Home Assistant";
+      helpTip = "💡 La modification est protégée par la copie locale .bak. Vérifiez vos permissions et l'état du service de sauvegarde de Home Assistant.";
+    }
 
     return `
       <div style="background: linear-gradient(135deg, #c62828, #b71c1c); color: white; padding: 16px 20px; border-radius: 12px; margin-bottom: 20px; box-shadow: 0 4px 15px rgba(198, 40, 40, 0.35); border-left: 6px solid #ffeb3b;">
         <div style="display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; flex-wrap: wrap;">
           <div style="display: flex; gap: 12px; align-items: flex-start; flex: 1; min-width: 280px;">
-            <span style="font-size: 1.8em;">${isRateLimit ? "🚫" : "⚠️"}</span>
+            <span style="font-size: 1.8em;">${isRateLimit ? "🚫" : (isBackupOrSystem ? "💾" : "⚠️")}</span>
             <div>
               <div style="font-weight: 700; font-size: 1.05em; margin-bottom: 4px;">
-                ${isRateLimit ? "Limite de requêtes Mistral AI atteinte (HTTP 429 : Too Many Requests)" : "Erreur de communication avec Mistral AI"}
+                ${errorTitle}
               </div>
               <div style="font-size: 0.9em; line-height: 1.4; opacity: 0.95;">
                 ${this._escapeHtml(errorText)}
@@ -772,7 +784,7 @@ class DomolinkMistralPanel extends HTMLElement {
                 </div>
               ` : `
                 <div style="margin-top: 8px; font-size: 0.85em; opacity: 0.9;">
-                  💡 Vérifiez votre connexion internet ou votre clé API dans les paramètres de l'intégration.
+                  ${helpTip}
                 </div>
               `}
             </div>
