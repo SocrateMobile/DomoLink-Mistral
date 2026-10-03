@@ -669,7 +669,7 @@ class _SkipSave(Exception):
 
 
 _SECTION_SEPARATOR = "\n\n" + "═" * 60 + "\n\n"
-MAX_BATCH_CHARS = 22000
+MAX_BATCH_CHARS = 100000
 _SEVERITY_ORDER = {"high": 0, "medium": 1, "low": 2}
 
 
