@@ -449,7 +449,14 @@ RÈGLES D'AUDIT CRUCIALES :
    - "manual_fix" doit faire 2 à 3 puces très courtes (pas de gros blocs de code YAML complets ni d'explications superflues).
    - Cette concision est INDISPENSABLE pour que toutes les 25 à 35 anomalies puissent tenir intégralement dans ta réponse JSON sans risquer d'être tronquées ou arrêtées prématurément par la limite de tokens de sortie.
 
-3. DÉTERMINISME ET REPRODUCTIBILITÉ :
+3. GRANULARITÉ STRICTE (pour des résultats reproductibles d'un audit à l'autre) :
+   - UNE seule anomalie par cause racine ou par composant/intégration, JAMAIS une anomalie par entité, par automation ou par ligne de log.
+   - Toutes les automations désactivées = 1 seule anomalie (liste leurs noms dans la description). Idem pour les automations jamais déclenchées.
+   - Toutes les entités indisponibles ou inconnues = 1 anomalie par équipement/intégration concerné (maximum), jamais une par entité.
+   - Toutes les dépréciations/avertissements d'une même intégration (ex: Zigbee/ZHA, Xiaomi MiOT) = 1 seule anomalie.
+   - Les ID dupliqués d'une même catégorie (groupes, input_text, boutons MQTT) = 1 anomalie par type.
+
+4. DÉTERMINISME ET REPRODUCTIBILITÉ :
    - Base ton analyse rigoureusement sur les faits concrets du rapport sans spéculer.
    - Génère des 'id' uniques, stables et standardisés (ex: 'yaml_syntax_configuration_yaml_sensors_invalid', 'esphome_dallas_deprecated', 'log_error_notify_file_failed').
    - IGNORER STRICTEMENT LES LIGNES COMMENTÉES (#) : Tout élément précédé d'un '#' ne doit JAMAIS générer d'anomalie.
@@ -688,6 +695,28 @@ def _split_report_in_batches(logs: str, max_chars: int = MAX_BATCH_CHARS) -> lis
     return batches or [logs]
 
 
+def _title_tokens(title: str) -> set[str]:
+    return {t for t in re.sub(r"[^\w]+", " ", str(title).lower()).split() if len(t) > 3}
+
+
+def _merge_similar(issues: list[dict]) -> list[dict]:
+    """Fusionne les anomalies quasi identiques (même catégorie, titres très proches)."""
+    kept: list[dict] = []
+    for issue in issues:
+        tokens = _title_tokens(issue.get("title", ""))
+        duplicate = False
+        for other in kept:
+            if other.get("category") != issue.get("category"):
+                continue
+            ot = _title_tokens(other.get("title", ""))
+            if tokens and ot and len(tokens & ot) / len(tokens | ot) >= 0.6:
+                duplicate = True
+                break
+        if not duplicate:
+            kept.append(issue)
+    return kept
+
+
 def _merge_issues(results: list[dict]) -> list[dict]:
     """Fusionne les anomalies de tous les lots, sans doublon (id ou titre identique)."""
     merged: list[dict] = []
@@ -704,6 +733,7 @@ def _merge_issues(results: list[dict]) -> list[dict]:
             if title:
                 seen_titles.add(title)
             merged.append(issue)
+    merged = _merge_similar(merged)
     merged.sort(key=lambda i: _SEVERITY_ORDER.get(str(i.get("severity", "medium")).lower(), 1))
     return merged
 
