@@ -441,11 +441,12 @@ RÈGLES D'AUDIT CRUCIALES :
    - Intégrations en erreur ou en attente
    - Entités indisponibles ou inconnues (regroupe les entités d'un même équipement déconnecté en une anomalie dédiée)
    - Automations et scripts (automations désactivées par inadvertance ou jamais exécutées)
-   Ne te limite JAMAIS à la première catégorie trouvée (ex: ne t'arrête pas au YAML) ! Rapporte TOUTES les anomalies détectées dans le tableau "issues".
+   Ne te limite JAMAIS à la première catégorie trouvée (ex: ne t'arrête pas au YAML) ! Rapporte TOUTES les anomalies détectées dans le tableau "issues" (il y a généralement entre 25 et 35 anomalies réelles dans ce rapport complet). Ne regroupe pas toutes les anomalies en 1 seul titre vague : détaille chaque anomalie distinctement.
 
-2. CONCISION POUR ÉVITER LA TRONCATURE :
-   - "manual_fix" doit faire 2 à 4 étapes concises. Ne colle pas de gros blocs de code complets afin de laisser de la place pour rapporter toutes les autres anomalies du système.
-   - "description" : 1 à 2 phrases directes et percutantes.
+2. CONCISION STRICTE POUR PRÉSERVER LE BUDGET DE TOKENS :
+   - Pour chaque anomalie, "description" doit faire 1 seule phrase courte et directe.
+   - "manual_fix" doit faire 2 à 3 puces très courtes (pas de gros blocs de code YAML complets ni d'explications superflues).
+   - Cette concision est INDISPENSABLE pour que toutes les 25 à 35 anomalies puissent tenir intégralement dans ta réponse JSON sans risquer d'être tronquées ou arrêtées prématurément par la limite de tokens de sortie.
 
 3. DÉTERMINISME ET REPRODUCTIBILITÉ :
    - Base ton analyse rigoureusement sur les faits concrets du rapport sans spéculer.
@@ -574,7 +575,14 @@ async def analyze_with_mistral(
                 }
 
             data = await response.json()
-            content = data["choices"][0]["message"]["content"]
+            choice = data["choices"][0]
+            finish_reason = choice.get("finish_reason")
+            if finish_reason == "length":
+                _LOGGER.warning(
+                    "DomoLink-Mistral: La réponse de Mistral AI a atteint la limite max_tokens (finish_reason=length). "
+                    "Certaines anomalies peuvent avoir été tronquées."
+                )
+            content = choice["message"]["content"]
             result = _safe_json_loads(content)
 
             if not isinstance(result, dict):

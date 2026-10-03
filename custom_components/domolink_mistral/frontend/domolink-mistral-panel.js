@@ -234,9 +234,16 @@ class DomolinkMistralPanel extends HTMLElement {
 
   _checkUpdateFromEntities() {
     if (!this._hass) return;
-    const updateEntityId = Object.keys(this._hass.states).find(
-      (id) => id.startsWith("update.") && (id.includes("mistral") || id.includes("domolink_mistral"))
-    );
+    const candidates = [
+      "update.domolink_mistral_ia_mise_a_jour",
+      "update.domolink_mistral_update",
+    ];
+    let updateEntityId = candidates.find((id) => this._hass.states && this._hass.states[id]);
+    if (!updateEntityId) {
+      updateEntityId = Object.keys(this._hass.states).find(
+        (id) => id.startsWith("update.") && (id.includes("mistral") || id.includes("domolink_mistral"))
+      );
+    }
     if (updateEntityId && this._hass.states[updateEntityId]) {
       const stateObj = this._hass.states[updateEntityId];
       const attrs = stateObj.attributes || {};
@@ -2390,4 +2397,6 @@ function launchSocrateRulesEasterEgg(targetRoot) {
   animate();
 }
 
-customElements.define("domolink-mistral-panel", DomolinkMistralPanel);
+if (!customElements.get("domolink-mistral-panel")) {
+  customElements.define("domolink-mistral-panel", DomolinkMistralPanel);
+}

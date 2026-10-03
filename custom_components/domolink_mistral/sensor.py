@@ -100,21 +100,21 @@ class DomolinkMistralSensor(SensorEntity):
         except Exception:
             pass
 
-        # 2. Si trop volumineux, créer une version allégée sans les longs blocs de logs superflus
-        light_issues = [
+        # 2. Si trop volumineux, créer une version résumée (sans scripts ni descriptions volumineuses)
+        # pour respecter strictement le plafond de 16KB du Recorder Home Assistant SQLite.
+        # Tous les détails complets (auto_fix_script, YAML diff, etc.) sont servis en temps réel
+        # sans aucune limite de taille par la commande WebSocket 'domolink_mistral/get_issues'.
+        compact_issues = [
             {
                 "id": str(i.get("id", "")),
                 "title": str(i.get("title", ""))[:80],
                 "severity": i.get("severity", "medium"),
                 "category": i.get("category", "optimization"),
-                "description": str(i.get("description", ""))[:200],
-                "manual_fix": str(i.get("manual_fix", ""))[:300] if i.get("manual_fix") else "",
-                "auto_fix_script": i.get("auto_fix_script", []),
                 "file": i.get("file", ""),
             }
             for i in valid_issues
         ]
-        light_ignored = [
+        compact_ignored = [
             {
                 "id": str(i.get("id", "")),
                 "title": str(i.get("title", ""))[:80],
@@ -123,24 +123,23 @@ class DomolinkMistralSensor(SensorEntity):
             for i in valid_ignored
         ]
 
-        candidate_light = {
+        candidate_compact = {
             **base_attrs,
-            "issues": light_issues,
-            "ignored_issues": light_ignored,
+            "issues": compact_issues,
+            "ignored_issues": compact_ignored,
         }
         try:
-            if len(json.dumps(candidate_light, ensure_ascii=False)) < 13000:
-                return candidate_light
+            if len(json.dumps(candidate_compact, ensure_ascii=False)) < 12000:
+                return candidate_compact
         except Exception:
             pass
 
-        # 3. Dernier recours : limiter le nombre d'éléments pour garantir le respect de la limite
-        safe_issues = light_issues[:15]
+        # 3. Dernier recours strict sous 10 KB
+        safe_issues = compact_issues[:20]
         return {
             **base_attrs,
             "issues": safe_issues,
-            "recent_issues": safe_issues,
-            "ignored_issues": light_ignored[:10],
+            "ignored_issues": compact_ignored[:10],
         }
 
     def set_status(self, status: str) -> None:
