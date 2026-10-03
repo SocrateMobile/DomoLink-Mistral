@@ -232,46 +232,73 @@ class DomolinkMistralPanel extends HTMLElement {
     return s || fallback;
   }
 
-  _checkUpdateFromEntities() {
-    if (!this._hass) return;
-    const candidates = [
-      "update.domolink_mistral_ia_mise_a_jour",
-      "update.domolink_mistral_update",
-    ];
-    let updateEntityId = candidates.find((id) => this._hass.states && this._hass.states[id]);
-    if (!updateEntityId) {
-      updateEntityId = Object.keys(this._hass.states).find(
-        (id) => id.startsWith("update.") && (id.includes("mistral") || id.includes("domolink_mistral"))
-      );
+  _semverTuple(v) {
+    const parts = String(v || "").replace(/^[vV]+/, "").split(".").map((x) => parseInt(x, 10) || 0);
+    while (parts.length < 3) parts.push(0);
+    return parts.slice(0, 3);
+  }
+
+  _isNewer(a, b) {
+    const x = this._semverTuple(a);
+    const y = this._semverTuple(b);
+    for (let i = 0; i < 3; i++) {
+      if (x[i] !== y[i]) return x[i] > y[i];
     }
-    if (updateEntityId && this._hass.states[updateEntityId]) {
-      const stateObj = this._hass.states[updateEntityId];
-      const attrs = stateObj.attributes || {};
-      const hasUpdate = stateObj.state === "on";
+    return false;
+  }
 
-      const installed = this._cleanVersion(attrs.installed_version);
-      // Priorité à latest_version des attributs, ou de l'entité si différente
-      let latest = this._cleanVersion(attrs.latest_version);
-      if (!latest || latest === installed) {
-        if (this._updateInfo && this._updateInfo.latest_version && this._updateInfo.latest_version !== installed) {
-          latest = this._cleanVersion(this._updateInfo.latest_version);
-        } else {
-          latest = installed;
-        }
-      }
+  _checkUpdateFromEntities() {
+    if (!this._hass || !this._hass.states) return;
+    // Plusieurs entités update peuvent coexister (native + HACS) : on les agrège toutes.
+    // L'entité native peut être bloquée par la limite d'API GitHub alors que HACS connaît
+    // la dernière version : on retient donc la PLUS RÉCENTE version vue et l'état « on » de n'importe laquelle.
+    const ids = Object.keys(this._hass.states).filter(
+      (id) => id.startsWith("update.") && id.includes("mistral")
+    );
+    if (!ids.length) return;
 
-      if (!this._updateInfo || this._updateInfo.has_update !== hasUpdate || this._updateInfo.current_version !== installed || this._updateInfo.latest_version !== latest) {
-        this._updateInfo = {
-          has_update: hasUpdate,
-          current_version: installed,
-          latest_version: latest,
-          release_tag: `v${latest}`,
-          release_url: attrs.release_url || "https://github.com/SocrateMobile/DomoLink-Mistral/releases",
-          changelog: attrs.release_summary || "Notes de version disponibles sur GitHub.",
-          is_updating: attrs.in_progress || false
-        };
-        this._injectSidebarBadge();
+    const native = ids.find((id) => id.includes("mise_a_jour")) || ids[0];
+    const nativeAttrs = this._hass.states[native].attributes || {};
+    // La version installée affichée vient de l'entité native (lue sur le disque au démarrage).
+    const installed = this._cleanVersion(nativeAttrs.installed_version);
+
+    let latest = installed;
+    let hasUpdate = false;
+    let source = this._hass.states[native];
+    for (const id of ids) {
+      const st = this._hass.states[id];
+      const at = st.attributes || {};
+      const lv = this._cleanVersion(at.latest_version);
+      if (lv && this._isNewer(lv, latest)) {
+        latest = lv;
+        source = st;
       }
+      if (st.state === "on") hasUpdate = true;
+    }
+    if (this._isNewer(latest, installed)) hasUpdate = true;
+    if (this._updateInfo && this._updateInfo.latest_version && this._isNewer(this._updateInfo.latest_version, latest)) {
+      latest = this._cleanVersion(this._updateInfo.latest_version);
+      hasUpdate = this._isNewer(latest, installed);
+    }
+    if (!hasUpdate) latest = installed;
+
+    const attrs = source.attributes || {};
+    if (
+      !this._updateInfo ||
+      this._updateInfo.has_update !== hasUpdate ||
+      this._updateInfo.current_version !== installed ||
+      this._updateInfo.latest_version !== latest
+    ) {
+      this._updateInfo = {
+        has_update: hasUpdate,
+        current_version: installed,
+        latest_version: latest,
+        release_tag: `v${latest}`,
+        release_url: attrs.release_url || nativeAttrs.release_url || "https://github.com/SocrateMobile/DomoLink-Mistral/releases",
+        changelog: attrs.release_summary || nativeAttrs.release_summary || "Notes de version disponibles sur GitHub.",
+        is_updating: nativeAttrs.in_progress || false,
+      };
+      this._injectSidebarBadge();
     }
   }
 

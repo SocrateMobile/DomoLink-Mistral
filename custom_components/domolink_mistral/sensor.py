@@ -23,6 +23,11 @@ async def async_setup_entry(
     entry_data = hass.data.setdefault(DOMAIN, {}).setdefault(entry.entry_id, {})
     entry_data["sensor"] = sensor
 
+    # Restaure le dernier rapport sauvegardé (survit aux redémarrages)
+    restored = entry_data.get("last_issues") or []
+    if restored:
+        sensor.update_issues(restored, entry_data.get("ignored_ids", []), entry_data.get("last_analysis"))
+
     async_add_entities([sensor])
 
 
@@ -155,7 +160,9 @@ class DomolinkMistralSensor(SensorEntity):
         if getattr(self, "hass", None) and getattr(self, "entity_id", None):
             self.async_write_ha_state()
 
-    def update_issues(self, issues: list, ignored_ids: list | None = None) -> None:
+    def update_issues(
+        self, issues: list, ignored_ids: list | None = None, analysis_time: str | None = None
+    ) -> None:
         """Met à jour les problèmes détectés et conserve l'historique complet dans hass.data."""
         ignored_ids = ignored_ids or []
         safe_issues = [i for i in (issues or []) if isinstance(i, dict)]
@@ -163,7 +170,7 @@ class DomolinkMistralSensor(SensorEntity):
         self._issues = [i for i in safe_issues if i.get("id") not in ignored_ids]
         self._ignored_issues = [i for i in safe_issues if i.get("id") in ignored_ids]
         self._state = len(self._issues)
-        self._last_analysis = dt_util.now().isoformat()
+        self._last_analysis = analysis_time or dt_util.now().isoformat()
         self._last_error = None
         self._current_status = "Analyse terminée"
 
