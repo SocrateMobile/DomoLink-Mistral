@@ -33,7 +33,7 @@ def _load_token() -> str:
 TOKEN = _load_token()
 HA_HOST = os.environ.get("HA_HOST", "192.168.1.215")
 CONFIG_DIR = os.environ.get("HA_CONFIG_DIR", "/Volumes/config")
-STABILITY_RUNS = int(os.environ.get("STABILITY_RUNS", "2"))
+STABILITY_RUNS = int(os.environ.get("STABILITY_RUNS", "1"))
 BASE_URL = f"https://{HA_HOST}/api"
 WS_URL = f"wss://{HA_HOST}/api/websocket"
 

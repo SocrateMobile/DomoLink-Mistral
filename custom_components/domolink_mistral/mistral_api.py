@@ -148,6 +148,10 @@ def _extract_array_objects(text: str) -> list[str]:
         elif ch == "]" and depth == 0:
             break
 
+    if depth > 0 and start_idx != -1:
+        # Sauvetage du dernier bloc tronqué en cas de coupure inattendue
+        blocks.append(text[start_idx:] + "}")
+
     return blocks
 
 
@@ -233,7 +237,9 @@ def _safe_json_loads(content: str) -> dict:
     if not content:
         return {}
 
-    cleaned = content.strip()
+    # Suppression préventive des boucles de tabulations dégénératives
+    cleaned = re.sub(r"[\t]{3,}", " ", content).strip()
+    cleaned = re.sub(r"[\t\s]+$", "", cleaned)
 
     # 1. Tentative directe
     try:
@@ -444,10 +450,12 @@ RÈGLES D'AUDIT CRUCIALES :
    - Automations et scripts (automations désactivées par inadvertance ou jamais exécutées)
    Ne te limite JAMAIS à la première catégorie trouvée (ex: ne t'arrête pas au YAML) ! Rapporte TOUTES les anomalies détectées dans le tableau "issues" (il y a généralement entre 25 et 35 anomalies réelles dans ce rapport complet). Ne regroupe pas toutes les anomalies en 1 seul titre vague : détaille chaque anomalie distinctement.
 
-2. CONCISION STRICTE POUR PRÉSERVER LE BUDGET DE TOKENS :
+2. CONCISION STRICTE ET SÉCURITÉ DE SYNTAXE :
    - Pour chaque anomalie, "description" doit faire 1 seule phrase courte et directe.
-   - "manual_fix" doit faire 2 à 3 puces très courtes (pas de gros blocs de code YAML complets ni d'explications superflues).
-   - Cette concision est INDISPENSABLE pour que toutes les 25 à 35 anomalies puissent tenir intégralement dans ta réponse JSON sans risquer d'être tronquées ou arrêtées prématurément par la limite de tokens de sortie.
+   - "manual_fix" doit être UNE SEULE CHAÎNE DE TEXTE concise en français (1 ou 2 étapes en texte brut, JAMAIS un tableau).
+   - RÈGLE ABSOLUE ANTI-CORRUPTION JSON : N'INCLUS JAMAIS DE GUILLEMETS DOUBLES (") DANS LES VALEURS DE TEXTE ("title", "description", "manual_fix"). Si tu dois citer un nom ou une entité, utilise EXCLUSIVEMENT des apostrophes simples '...'.
+   - INTERDICTION STRICTE d'écrire des blocs de code, des exemples syntaxiques YAML complets avec accolades ou des caractères spéciaux dans "manual_fix". Reste en texte explicatif pur.
+   - N'utilise AUCUN caractère de tabulation (\t).
 
 3. GRANULARITÉ STRICTE (pour des résultats reproductibles d'un audit à l'autre) :
    - UNE seule anomalie par cause racine ou par composant/intégration, JAMAIS une anomalie par entité, par automation ou par ligne de log.
@@ -554,8 +562,7 @@ async def _analyze_single(
             {"role": "user", "content": USER_PROMPT_TEMPLATE.format(logs=logs)},
         ],
         "response_format": {"type": "json_object"},
-        "temperature": 0.0,
-        "random_seed": 42,
+        "temperature": 0.1,
         "max_tokens": 8192,
     }
 
