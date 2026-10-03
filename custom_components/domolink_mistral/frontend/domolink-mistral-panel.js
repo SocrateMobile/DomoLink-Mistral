@@ -373,7 +373,10 @@ class DomolinkMistralPanel extends HTMLElement {
         {
           key: "domolink_mistral",
           patterns: ["domolink_mistral", "domolink-mistral"],
-          entityIds: ["update.domolink_mistralia", "update.domolink_mistral", "update.domolink_mistral_mise_a_jour"],
+          entityIds: [
+            "update.domolink_mistral_ia_mise_a_jour",
+            "update.domolink_mistral_update",
+          ],
           hasUpdate: hasUpdate,
         },
       ];
@@ -877,6 +880,15 @@ class DomolinkMistralPanel extends HTMLElement {
               <span style="font-size: 0.6em; color: var(--secondary-text-color, #757575); font-weight: normal; margin-left: 8px; vertical-align: middle;">
                 v${this._cleanVersion(this._updateInfo?.current_version)}
               </span>
+              ${hasUpdate ? `
+                <span class="badge" id="btn-badge-update-click" title="Nouvelle version disponible ! Cliquez pour mettre à jour" style="background: linear-gradient(135deg, #ef4444, #f59e0b); color: white; font-size: 0.5em; padding: 2px 8px; border-radius: 9999px; margin-left: 8px; vertical-align: middle; cursor: pointer; box-shadow: 0 2px 6px rgba(239,68,68,0.4); animation: pulse 2s infinite;">
+                  🚀 MAJ v${this._cleanVersion(this._updateInfo.latest_version)} disponible
+                </span>
+              ` : `
+                <span class="badge" id="btn-badge-status-click" title="Composant à jour (cliquer pour revérifier)" style="background: rgba(16, 185, 129, 0.15); color: #10b981; border: 1px solid rgba(16, 185, 129, 0.3); font-size: 0.5em; padding: 2px 8px; border-radius: 9999px; margin-left: 8px; vertical-align: middle; cursor: pointer;">
+                  ✓ À jour
+                </span>
+              `}
             </h1>
             <div class="header-info">Dernière analyse : ${this._timeAgo(this._lastAnalysis)}</div>
           </div>
@@ -1465,12 +1477,26 @@ class DomolinkMistralPanel extends HTMLElement {
       });
     }
 
-    // Header Update Button
+    // Header Update Button & Badges
     const btnHeaderUpdate = root.getElementById("btn-header-update");
     if (btnHeaderUpdate) {
       btnHeaderUpdate.addEventListener("click", () => {
         this._showUpdateModal = true;
         this._render();
+      });
+    }
+    const btnBadgeUpdate = root.getElementById("btn-badge-update-click");
+    if (btnBadgeUpdate) {
+      btnBadgeUpdate.addEventListener("click", () => {
+        this._showUpdateModal = true;
+        this._render();
+      });
+    }
+    const btnBadgeStatus = root.getElementById("btn-badge-status-click");
+    if (btnBadgeStatus) {
+      btnBadgeStatus.addEventListener("click", async () => {
+        btnBadgeStatus.textContent = "⏳ Vérification...";
+        await this._checkUpdate();
       });
     }
 
