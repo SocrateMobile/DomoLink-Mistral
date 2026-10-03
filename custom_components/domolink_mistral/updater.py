@@ -123,14 +123,50 @@ class UpdateManager:
                         self.update_status_text = "À jour"
 
                 elif response.status == 403:
-                    _LOGGER.warning("DomoLink-Mistral IA: Limite d'API GitHub atteinte (HTTP 403).")
+                    _LOGGER.warning("DomoLink-Mistral IA: Limite d'API GitHub atteinte (HTTP 403) — bascule sur la page publique des releases.")
+                    await self._async_check_fallback(session)
                 else:
                     _LOGGER.debug("DomoLink-Mistral IA: Réponse GitHub HTTP %s", response.status)
+                    await self._async_check_fallback(session)
 
         except Exception as err:
             _LOGGER.debug("DomoLink-Mistral IA: Erreur lors de la vérification GitHub: %s", err)
+            try:
+                await self._async_check_fallback(async_get_clientsession(self.hass))
+            except Exception as err2:
+                _LOGGER.debug("DomoLink-Mistral IA: Vérification de secours impossible: %s", err2)
 
         return self.to_dict()
+
+    async def _async_check_fallback(self, session) -> None:
+        """Détecte la dernière version SANS l'API GitHub (non soumise à la limite de 60 req/h).
+
+        La page /releases/latest redirige vers /releases/tag/<tag> : on lit simplement l'en-tête Location.
+        """
+        url = f"https://github.com/{GITHUB_REPO}/releases/latest"
+        timeout = aiohttp.ClientTimeout(total=15)
+        async with session.get(
+            url,
+            allow_redirects=False,
+            timeout=timeout,
+            headers={"User-Agent": "HomeAssistant-DomoLinkMistral"},
+        ) as response:
+            location = response.headers.get("Location", "")
+        match = re.search(r"/releases/tag/([^/?#]+)", location)
+        if not match:
+            return
+        tag_name = match.group(1)
+        clean_tag = re.sub(r"^[vV]", "", tag_name)
+        self.current_version = get_installed_version()
+        self.release_tag = tag_name
+        self.latest_version = clean_tag or self.current_version
+        self.release_url = f"https://github.com/{GITHUB_REPO}/releases/tag/{tag_name}"
+        self.zip_url = f"https://github.com/{GITHUB_REPO}/archive/refs/tags/{tag_name}.zip"
+        self.last_checked = datetime.now().isoformat()
+        self.has_update = is_newer_version(self.latest_version, self.current_version)
+        self.update_status_text = (
+            f"Mise à jour disponible ({tag_name})" if self.has_update else "À jour"
+        )
 
     def to_dict(self) -> dict[str, Any]:
         """Exporte l'état actuel sous forme de dictionnaire."""

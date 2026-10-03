@@ -3,6 +3,7 @@
 Envoie les données système, logs et fichiers YAML à l'API Mistral et parse la réponse JSON structurée.
 """
 import logging
+import asyncio
 import json
 import re
 
@@ -528,10 +529,10 @@ async def validate_api_key(hass: HomeAssistant, api_key: str) -> bool:
         return False
 
 
-async def analyze_with_mistral(
-    hass: HomeAssistant, api_key: str, model: str, logs: str
+async def _analyze_single(
+    hass: HomeAssistant, api_key: str, model: str, logs: str, save_report: bool = True
 ) -> dict:
-    """Envoie les données à Mistral et retourne un dictionnaire JSON."""
+    """Envoie UN lot de données à Mistral et retourne un dictionnaire JSON."""
     session = async_get_clientsession(hass)
     headers = {
         "Authorization": f"Bearer {api_key}",
@@ -596,6 +597,8 @@ async def analyze_with_mistral(
 
             # Sauvegarde automatique du rapport JSON et de la réponse brute dans /config/
             try:
+                if not save_report:
+                    raise _SkipSave()
                 def _save_reports():
                     import json, os
                     cfg = hass.config.config_dir
@@ -609,6 +612,8 @@ async def analyze_with_mistral(
 
                 await hass.async_add_executor_job(_save_reports)
                 _LOGGER.info("DomoLink-Mistral: Rapport JSON sauvegardé dans domolink_mistral_latest_analysis.json")
+            except _SkipSave:
+                pass
             except Exception as save_err:
                 _LOGGER.warning("DomoLink-Mistral: Erreur écriture sauvegarde rapport JSON: %s", save_err)
 
@@ -650,6 +655,115 @@ async def analyze_with_mistral(
             "error_type": "unknown",
             "issues": [],
         }
+
+
+class _SkipSave(Exception):
+    """Signal interne : ne pas écrire le rapport pour un lot intermédiaire."""
+
+
+_SECTION_SEPARATOR = "\n\n" + "═" * 60 + "\n\n"
+MAX_BATCH_CHARS = 22000
+_SEVERITY_ORDER = {"high": 0, "medium": 1, "low": 2}
+
+
+def _split_report_in_batches(logs: str, max_chars: int = MAX_BATCH_CHARS) -> list[str]:
+    """Regroupe les sections du rapport en lots de taille raisonnable.
+
+    Un seul gros prompt fait varier fortement le nombre d'anomalies renvoyées (le modèle
+    s'arrête quand son budget de sortie est consommé). Plusieurs lots courts sont beaucoup
+    plus reproductibles : chaque lot a tout son budget de sortie pour lui.
+    """
+    sections = [sec for sec in logs.split(_SECTION_SEPARATOR) if sec.strip()]
+    batches: list[str] = []
+    current: list[str] = []
+    size = 0
+    for sec in sections:
+        if current and size + len(sec) > max_chars:
+            batches.append(_SECTION_SEPARATOR.join(current))
+            current, size = [], 0
+        current.append(sec)
+        size += len(sec)
+    if current:
+        batches.append(_SECTION_SEPARATOR.join(current))
+    return batches or [logs]
+
+
+def _merge_issues(results: list[dict]) -> list[dict]:
+    """Fusionne les anomalies de tous les lots, sans doublon (id ou titre identique)."""
+    merged: list[dict] = []
+    seen_ids: set[str] = set()
+    seen_titles: set[str] = set()
+    for res in results:
+        for issue in res.get("issues", []):
+            iid = str(issue.get("id", "")).strip().lower()
+            title = re.sub(r"\W+", " ", str(issue.get("title", "")).lower()).strip()
+            if (iid and iid in seen_ids) or (title and title in seen_titles):
+                continue
+            if iid:
+                seen_ids.add(iid)
+            if title:
+                seen_titles.add(title)
+            merged.append(issue)
+    merged.sort(key=lambda i: _SEVERITY_ORDER.get(str(i.get("severity", "medium")).lower(), 1))
+    return merged
+
+
+async def analyze_with_mistral(
+    hass: HomeAssistant, api_key: str, model: str, logs: str
+) -> dict:
+    """Analyse le rapport complet en plusieurs lots indépendants puis fusionne les résultats."""
+    batches = _split_report_in_batches(logs)
+    if len(batches) == 1:
+        return await _analyze_single(hass, api_key, model, batches[0], save_report=True)
+
+    total = len(batches)
+    _LOGGER.info("DomoLink-Mistral: Rapport découpé en %s lots (%s caractères).", total, len(logs))
+
+    def _wrap(i: int, text: str) -> str:
+        return (
+            f"[LOT {i}/{total} DU RAPPORT — ne signale que les anomalies présentes dans ce lot ; "
+            f"les autres lots sont analysés séparément]\n\n{text}"
+        )
+
+    results = await asyncio.gather(
+        *[
+            _analyze_single(hass, api_key, model, _wrap(i + 1, b), save_report=False)
+            for i, b in enumerate(batches)
+        ],
+        return_exceptions=True,
+    )
+
+    ok: list[dict] = []
+    first_error: dict | None = None
+    for r in results:
+        if isinstance(r, dict) and r.get("success", True) and not r.get("error"):
+            ok.append(r)
+        elif isinstance(r, dict) and first_error is None:
+            first_error = r
+        elif isinstance(r, Exception) and first_error is None:
+            first_error = {"success": False, "error": f"❌ {r}", "error_type": "unknown", "issues": []}
+
+    if not ok:
+        return first_error or {"success": False, "error": "Analyse impossible.", "error_type": "unknown", "issues": []}
+    if first_error:
+        _LOGGER.warning(
+            "DomoLink-Mistral: %s lot(s) sur %s en échec (%s) — résultats partiels conservés.",
+            total - len(ok), total, first_error.get("error"),
+        )
+
+    result = {"success": True, "issues": _merge_issues(ok)}
+    if first_error:
+        result["partial"] = True
+
+    try:
+        def _save():
+            import os
+            with open(os.path.join(hass.config.config_dir, "domolink_mistral_latest_analysis.json"), "w", encoding="utf-8") as f:
+                json.dump(result, f, ensure_ascii=False, indent=2)
+        await hass.async_add_executor_job(_save)
+    except Exception as err:
+        _LOGGER.warning("DomoLink-Mistral: Erreur écriture rapport JSON: %s", err)
+    return result
 
 
 GENERATE_AUTOMATION_SYSTEM_PROMPT = """Tu es un expert créateur d'automations Home Assistant.

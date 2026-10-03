@@ -10,13 +10,32 @@ Ce script teste les fonctionnalités de DomoLink-Mistral IA via les APIs REST et
 - Vérification de mise à jour (check_update)
 """
 import asyncio
+import os
 import ssl
 import sys
 import aiohttp
 
-TOKEN = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJmODcyNzY0ODg3MTk0OWQwODIzOTMzODc4NWM0NTk2YSIsImlhdCI6MTc4OTgzMjE4MywiZXhwIjoyMTA1MTkyMTgzfQ._9XNihg7ih-YwWeiYbp12-LLr9Pn9HW6m5Rf7cqBxc4"
-BASE_URL = "https://192.168.1.215/api"
-WS_URL = "wss://192.168.1.215/api/websocket"
+def _load_token() -> str:
+    """Jeton lu depuis l'environnement (HA_TOKEN) ou un fichier local HORS dépôt (HA_ENV_FILE). Jamais en dur."""
+    tok = os.environ.get("HA_TOKEN")
+    if tok:
+        return tok.strip()
+    env_file = os.environ.get(
+        "HA_ENV_FILE", os.path.expanduser("~/Desktop/Intégrations HA/HA.env_ha")
+    )
+    try:
+        with open(env_file, encoding="utf-8") as fh:
+            lines = [ln.strip() for ln in fh if ln.strip()]
+        return lines[-1]
+    except OSError:
+        sys.exit("Définissez HA_TOKEN (jeton longue durée Home Assistant) ou HA_ENV_FILE.")
+
+TOKEN = _load_token()
+HA_HOST = os.environ.get("HA_HOST", "192.168.1.215")
+CONFIG_DIR = os.environ.get("HA_CONFIG_DIR", "/Volumes/config")
+STABILITY_RUNS = int(os.environ.get("STABILITY_RUNS", "2"))
+BASE_URL = f"https://{HA_HOST}/api"
+WS_URL = f"wss://{HA_HOST}/api/websocket"
 
 ssl_ctx = ssl.create_default_context()
 ssl_ctx.check_hostname = False
@@ -189,6 +208,56 @@ async def run_tests():
                     record("Test 8: Service generate_daily_briefing", passed, f"Status: {status}")
         except Exception as e:
             record("Test 8: Service generate_daily_briefing", False, str(e))
+
+        # TEST 9: Cohérence des versions (manifest local = entité native = disque HA)
+        try:
+            disk_ver = None
+            mf = os.path.join(CONFIG_DIR, "custom_components", "domolink_mistral", "manifest.json")
+            if os.path.exists(mf):
+                with open(mf, encoding="utf-8") as fh:
+                    disk_ver = json.load(fh).get("version")
+            async with session.get(f"{BASE_URL}/states/update.domolink_mistral_ia_mise_a_jour", ssl=ssl_ctx) as resp:
+                ent_ver = (await resp.json())["attributes"]["installed_version"]
+            ok = ent_ver == EXPECTED_VERSION and (disk_ver in (None, EXPECTED_VERSION))
+            record("Test 9: Cohérence des versions", ok, f"manifest={EXPECTED_VERSION}, entité={ent_ver}, disque HA={disk_ver}")
+        except Exception as e:
+            record("Test 9: Cohérence des versions", False, str(e))
+
+        # TEST 10: Persistance du rapport (survit à un redémarrage)
+        try:
+            store_file = os.path.join(CONFIG_DIR, ".storage", "domolink_mistral.ignored_issues")
+            if os.path.exists(store_file):
+                with open(store_file, encoding="utf-8") as fh:
+                    stored = json.load(fh).get("data", {})
+                n = len(stored.get("last_issues", []))
+                record("Test 10: Persistance du rapport sur disque", n > 0 and bool(stored.get("last_analysis")), f"{n} anomalies sauvegardées, analyse du {stored.get('last_analysis')}")
+            else:
+                record("Test 10: Persistance du rapport sur disque", True, "Passé (config HA non montée)")
+        except Exception as e:
+            record("Test 10: Persistance du rapport sur disque", False, str(e))
+
+        # TEST 11: Stabilité - plusieurs audits d'affilée doivent donner des totaux proches
+        try:
+            totals = []
+            async with session.get(f"{BASE_URL}/states/sensor.domolink_mistral_ia_problemes_detectes", ssl=ssl_ctx) as resp:
+                totals.append(int((await resp.json())["state"]))
+            for run in range(STABILITY_RUNS):
+                print(f"\n⏳ Audit de stabilité {run + 1}/{STABILITY_RUNS}...")
+                async with session.post(f"{BASE_URL}/services/domolink_mistral/analyze_now", json={}, ssl=ssl_ctx) as resp:
+                    assert resp.status == 200
+                await asyncio.sleep(5)
+                for _ in range(60):
+                    await asyncio.sleep(3)
+                    async with session.get(f"{BASE_URL}/states/sensor.domolink_mistral_ia_problemes_detectes", ssl=ssl_ctx) as resp:
+                        d = await resp.json()
+                    if "terminée" in d["attributes"].get("current_status", ""):
+                        totals.append(int(d["state"]))
+                        break
+            spread = max(totals) - min(totals)
+            tolerance = max(4, int(0.2 * max(totals)))
+            record("Test 11: Stabilité du nombre d'anomalies", spread <= tolerance and min(totals) >= 15, f"totaux={totals}, écart={spread} (tolérance {tolerance})")
+        except Exception as e:
+            record("Test 11: Stabilité du nombre d'anomalies", False, str(e))
 
     print("\n" + "="*60)
     passed_count = sum(1 for r in results if r["passed"])

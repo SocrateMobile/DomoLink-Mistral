@@ -18,6 +18,7 @@ from datetime import timedelta
 import voluptuous as vol
 
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.util import dt as dt_util
 from homeassistant.core import HomeAssistant, ServiceCall, SupportsResponse
 from homeassistant.exceptions import HomeAssistantError
 import homeassistant.helpers.config_validation as cv
@@ -86,6 +87,23 @@ UPDATE_SCHEMA = vol.Schema({
 })
 
 
+async def _persist_state(data: dict) -> None:
+    """Sauvegarde sur disque les anomalies ignorées ET le dernier rapport d'audit.
+
+    Sans cela, tout redémarrage de Home Assistant efface les résultats (panneau à 0, « Jamais »).
+    """
+    try:
+        await data["store"].async_save(
+            {
+                "ignored_ids": data.get("ignored_ids", []),
+                "last_issues": [i for i in data.get("last_issues", []) if isinstance(i, dict)],
+                "last_analysis": data.get("last_analysis"),
+            }
+        )
+    except Exception as err:  # pragma: no cover
+        _LOGGER.warning("DomoLink-Mistral: Sauvegarde de l'état impossible: %s", err)
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Configure DomoLink-Mistral depuis une entrée de configuration."""
     from .updater import UpdateManager
@@ -99,6 +117,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     store = Store(hass, STORAGE_VERSION, STORAGE_KEY)
     stored_data = await store.async_load()
     ignored_ids: list[str] = stored_data.get("ignored_ids", []) if stored_data else []
+    restored_issues: list = [
+        i for i in (stored_data.get("last_issues", []) if stored_data else []) if isinstance(i, dict)
+    ]
+    restored_analysis = stored_data.get("last_analysis") if stored_data else None
 
     cancel_listeners: list = []
     analysis_lock = asyncio.Lock()
@@ -124,7 +146,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         "update_entity": None,
         "store": store,
         "ignored_ids": ignored_ids,
-        "last_issues": [],  # Cache des derniers résultats bruts de Mistral
+        "last_issues": restored_issues,  # Derniers résultats Mistral (restaurés depuis le disque)
+        "last_analysis": restored_analysis,
         "last_report_cache": {"timestamp": 0, "logs": ""},  # Cache court (< 90s) pour reproductibilité des scans consécutifs
         "cancel_listeners": cancel_listeners,  # Pour cleanup au unload
         "analysis_lock": analysis_lock,
@@ -367,6 +390,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
                 # Stocker les résultats bruts
                 hass.data[DOMAIN][entry.entry_id]["last_issues"] = issues
+                hass.data[DOMAIN][entry.entry_id]["last_analysis"] = dt_util.now().isoformat()
+                await _persist_state(hass.data[DOMAIN][entry.entry_id])
 
                 # Mettre à jour le capteur (avec filtre des ignorés)
                 ignored = hass.data[DOMAIN][entry.entry_id]["ignored_ids"]
@@ -450,6 +475,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 data["last_report_cache"] = {"timestamp": 0, "logs": ""}
             if result.get("success") and issue_id and data.get("last_issues"):
                 data["last_issues"] = [i for i in data["last_issues"] if isinstance(i, dict) and i.get("id") != issue_id]
+                await _persist_state(data)
                 if sensor:
                     sensor.update_issues(data["last_issues"], data["ignored_ids"])
                     sensor.set_status(f"✅ Correctif appliqué avec succès ({result.get('applied')} action(s)).")
@@ -486,7 +512,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         data["last_report_cache"] = {"timestamp": 0, "logs": ""}
         if issue_id not in data["ignored_ids"]:
             data["ignored_ids"].append(issue_id)
-            await data["store"].async_save({"ignored_ids": data["ignored_ids"]})
+            await _persist_state(data)
 
         # Rafraîchir le capteur
         sensor = data.get("sensor")
@@ -505,7 +531,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         data["last_report_cache"] = {"timestamp": 0, "logs": ""}
         if issue_id in data["ignored_ids"]:
             data["ignored_ids"].remove(issue_id)
-            await data["store"].async_save({"ignored_ids": data["ignored_ids"]})
+            await _persist_state(data)
 
         sensor = data.get("sensor")
         if sensor and data.get("last_issues"):
@@ -565,6 +591,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         # Retirer les issues résolues et invalider le cache de rapport
         data["last_report_cache"] = {"timestamp": 0, "logs": ""}
         data["last_issues"] = [i for i in data.get("last_issues", []) if isinstance(i, dict) and i.get("id") not in fixed_ids]
+        await _persist_state(data)
         if sensor:
             sensor.update_issues(data["last_issues"], data["ignored_ids"])
             sensor.set_status(f"⚡ All Auto terminé : {total_applied} appliqué(s), {total_skipped} ignoré(s).")
