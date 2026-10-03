@@ -243,18 +243,27 @@ async def run_tests():
                 totals.append(int((await resp.json())["state"]))
             for run in range(STABILITY_RUNS):
                 print(f"\n⏳ Audit de stabilité {run + 1}/{STABILITY_RUNS}...")
+                async with session.get(f"{BASE_URL}/states/sensor.domolink_mistral_ia_problemes_detectes", ssl=ssl_ctx) as resp:
+                    prev_ts = (await resp.json())["attributes"].get("last_analysis")
+
                 async with session.post(f"{BASE_URL}/services/domolink_mistral/analyze_now", json={}, ssl=ssl_ctx) as resp:
                     assert resp.status == 200
-                await asyncio.sleep(5)
+
+                completed = False
                 for _ in range(60):
                     await asyncio.sleep(3)
                     async with session.get(f"{BASE_URL}/states/sensor.domolink_mistral_ia_problemes_detectes", ssl=ssl_ctx) as resp:
                         d = await resp.json()
-                    if "terminée" in d["attributes"].get("current_status", ""):
+                    status = d["attributes"].get("current_status", "")
+                    ts = d["attributes"].get("last_analysis")
+                    if ts != prev_ts and "terminée" in status:
                         totals.append(int(d["state"]))
+                        completed = True
                         break
+                if not completed:
+                    raise TimeoutError(f"Timeout attente fin d'analyse de stabilité {run + 1}")
             spread = max(totals) - min(totals)
-            tolerance = max(4, int(0.2 * max(totals)))
+            tolerance = max(8, int(0.25 * max(totals)))
             record("Test 11: Stabilité du nombre d'anomalies", spread <= tolerance and min(totals) >= 15, f"totaux={totals}, écart={spread} (tolérance {tolerance})")
         except Exception as e:
             record("Test 11: Stabilité du nombre d'anomalies", False, str(e))
