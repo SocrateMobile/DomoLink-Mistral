@@ -232,10 +232,18 @@ def _parse_issue_block(block: str) -> dict:
     return {}
 
 
-def _safe_json_loads(content: str) -> dict:
+def _safe_json_loads(content: str, *, normalize_issues: bool = True) -> dict:
     """Nettoie et parse de manière ultra-robuste une réponse JSON de Mistral."""
     if not content:
         return {}
+
+    def _finish(raw_val: Any) -> dict:
+        if not normalize_issues:
+            return raw_val if isinstance(raw_val, dict) else {}
+        norm = _normalize_parsed_result(raw_val)
+        if isinstance(norm, dict) and "issues" in norm and isinstance(norm["issues"], list):
+            return norm
+        return {"issues": []}
 
     # Suppression préventive des boucles de tabulations dégénératives
     cleaned = re.sub(r"[\t]{3,}", " ", content).strip()
@@ -244,9 +252,7 @@ def _safe_json_loads(content: str) -> dict:
     # 1. Tentative directe
     try:
         res = json.loads(cleaned, strict=False)
-        norm = _normalize_parsed_result(res)
-        if isinstance(norm, dict) and "issues" in norm and isinstance(norm["issues"], list):
-            return norm
+        return _finish(res)
     except Exception:
         pass
 
@@ -888,7 +894,7 @@ Génère l'automation correspondante au format JSON structuré."""
                 return {"success": False, "error": err_info["user_msg"], "response_text": err_info["user_msg"], "service_calls": []}
             data = await response.json()
             content = data["choices"][0]["message"]["content"]
-            result = _safe_json_loads(content)
+            result = _safe_json_loads(content, normalize_issues=False)
             return {"success": True, "data": result}
     except Exception as e:
         _LOGGER.error("DomoLink-Mistral: Erreur lors de la génération d'automation: %s", e)
@@ -1062,7 +1068,7 @@ async def analyze_image_with_pixtral(
                 return {"success": False, "error": err_info["user_msg"], "response_text": err_info["user_msg"]}
             data = await response.json()
             content = data["choices"][0]["message"]["content"]
-            result = _safe_json_loads(content)
+            result = _safe_json_loads(content, normalize_issues=False)
             return {"success": True, "data": result}
     except Exception as e:
         _LOGGER.error("DomoLink-Mistral Vision: Erreur analyse image Pixtral: %s", e)
@@ -1133,7 +1139,7 @@ Réponds UNIQUEMENT en JSON avec la structure :
                 return {"success": False, "error": err_info["user_msg"], "response_text": err_info["user_msg"]}
             data = await response.json()
             content = data["choices"][0]["message"]["content"]
-            result = _safe_json_loads(content)
+            result = _safe_json_loads(content, normalize_issues=False)
             return {"success": True, "data": result}
     except Exception as e:
         _LOGGER.error("DomoLink-Mistral Briefing: Erreur génération briefing: %s", e)
