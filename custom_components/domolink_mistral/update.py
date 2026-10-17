@@ -56,7 +56,11 @@ class DomolinkMistralUpdateEntity(UpdateEntity):
     _attr_name = "Mise à jour"
     _attr_title = "DomoLink-Mistral IA"
     _attr_device_class = None
-    _attr_supported_features = UpdateEntityFeature.RELEASE_NOTES
+    _attr_supported_features = (
+        UpdateEntityFeature.INSTALL
+        | UpdateEntityFeature.RELEASE_NOTES
+        | UpdateEntityFeature.PROGRESS
+    )
 
     def __init__(self, entry: ConfigEntry, updater: UpdateManager) -> None:
         """Initialisation.
@@ -172,6 +176,11 @@ class DomolinkMistralUpdateEntity(UpdateEntity):
         return None
 
     @property
+    def update_percentage(self) -> int | None:
+        """Pourcentage de progression de la mise à jour."""
+        return self._updater.update_progress
+
+    @property
     def in_progress(self) -> bool:
         """Indicateur booléen d'installation en cours."""
         return bool(self._updater.is_updating)
@@ -183,8 +192,34 @@ class DomolinkMistralUpdateEntity(UpdateEntity):
         return self._updater.changelog
 
     async def async_install(self, version: str | None = None, backup: bool = True, **kwargs: Any) -> None:
-        """Les mises à jour sont gérées de manière sécurisée et native par HACS."""
-        raise HomeAssistantError("Veuillez installer cette mise à jour directement depuis HACS pour garantir la sécurité et l'intégrité de votre système.")
+        """Installe la mise à jour directement."""
+        self._attr_in_progress = True
+        if getattr(self, "hass", None) and getattr(self, "entity_id", None):
+            self.async_write_ha_state()
+        try:
+            await self._updater.async_install(backup=backup)
+            self._attr_installed_version = self._updater.current_version
+            self._attr_in_progress = False
+            if getattr(self, "hass", None) and getattr(self, "entity_id", None):
+                self.async_write_ha_state()
+            if "persistent_notification" in self.hass.config.components:
+                await self.hass.services.async_call(
+                    "persistent_notification",
+                    "create",
+                    {
+                        "title": "Mise à jour DomoLink-Mistral installée",
+                        "message": (
+                            f"La mise à jour **v{self._attr_installed_version}** a été installée avec succès.\n\n"
+                            f"Veuillez redémarrer Home Assistant pour appliquer les modifications."
+                        ),
+                        "notification_id": "domolink_mistral_update_installed",
+                    },
+                )
+        except Exception as err:
+            self._attr_in_progress = False
+            if getattr(self, "hass", None) and getattr(self, "entity_id", None):
+                self.async_write_ha_state()
+            raise HomeAssistantError(f"Erreur d'installation : {err}") from err
 
     async def async_update(self) -> None:
         """Rafraîchit l'état depuis GitHub."""
