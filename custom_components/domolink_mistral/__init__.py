@@ -193,7 +193,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     def _register_sidebar_panel(has_update: bool = False):
         title = "DomoLink-Mistral IA 🔴" if has_update else "DomoLink-Mistral IA"
         icon = "mdi:shield-alert" if has_update else "mdi:brain"
-        ver = get_installed_version()
+        ver = VERSION
         try:
             async_register_built_in_panel(
                 hass,
