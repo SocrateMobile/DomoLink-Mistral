@@ -823,46 +823,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 sensor.set_status(f"❌ Échec briefing : {err}")
             return {"success": False, "error": err}
 
-    async def handle_check_update(call):
-        """Service : domolink_mistral.check_update (Vérifie les mises à jour GitHub)."""
-        try:
-            data = hass.data[DOMAIN][entry.entry_id]
-            updater_obj = data.get("updater")
-            if not updater_obj:
-                return {"has_update": False, "error": "Gestionnaire de mise à jour indisponible"}
-
-            res = await updater_obj.async_check()
-            _register_sidebar_panel(has_update=res.get("has_update", False))
-
-            update_ent = data.get("update_entity")
-            if update_ent:
-                # Vérification stricte sans getattr dynamiques pour éviter le plantage
-                if hasattr(update_ent, "hass") and update_ent.hass is not None and hasattr(update_ent, "entity_id") and update_ent.entity_id is not None:
-                    try:
-                        update_ent.async_write_ha_state()
-                    except Exception:
-                        pass
-
-            hass.bus.async_fire("domolink_mistral_update_status", res)
-            return res
-        except Exception as e:
-            import logging
-            logging.getLogger(__name__).warning("DomoLink-Mistral IA: Erreur check_update: %s", e)
-            return {"has_update": False, "error": str(e)}
-
-    async def handle_perform_update(call):
-        """Service : domolink_mistral.perform_update / install_update (Installe la mise à jour GitHub)."""
-        data = hass.data[DOMAIN][entry.entry_id]
-        updater_obj = data.get("updater")
-        if not updater_obj:
-            raise HomeAssistantError("Gestionnaire de mise à jour indisponible")
-
-        restart_after = call.data.get("restart", True)
-        backup = call.data.get("backup", True)
-        res = await updater_obj.async_install_update(restart_after=restart_after, backup=backup)
-        return res
-
-
     async def handle_rollback(call: ServiceCall):
         from .reparator import rollback_latest_fix
         res = await rollback_latest_fix(hass)
@@ -876,21 +836,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # ── Enregistrement des services ──
     from homeassistant.helpers.service import async_register_admin_service
 
-    # Services d'administration (modification YAML, exécution de correctifs et mises à jour système)
+    # Services d'administration (modification YAML, exécution de correctifs et analyses)
     async_register_admin_service(hass, DOMAIN, "rollback_latest_fix", handle_rollback)
     async_register_admin_service(hass, DOMAIN, "apply_fix", handle_apply_fix, schema=APPLY_FIX_SCHEMA)
     async_register_admin_service(hass, DOMAIN, "apply_all_fixes", handle_apply_all_fixes)
     async_register_admin_service(
         hass, DOMAIN, "save_automation", handle_save_automation,
         schema=SAVE_AUTOMATION_SCHEMA, supports_response=SupportsResponse.OPTIONAL
-    )
-    async_register_admin_service(
-        hass, DOMAIN, "perform_update", handle_perform_update,
-        schema=UPDATE_SCHEMA, supports_response=SupportsResponse.OPTIONAL
-    )
-    async_register_admin_service(
-        hass, DOMAIN, "install_update", handle_perform_update,
-        schema=UPDATE_SCHEMA, supports_response=SupportsResponse.OPTIONAL
     )
 
     # Services de diagnostic et d'assistance IA (réservés aux administrateurs pour protéger le quota et les accès système)
@@ -909,39 +861,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         hass, DOMAIN, "generate_daily_briefing", handle_generate_daily_briefing,
         schema=DAILY_BRIEFING_SCHEMA, supports_response=SupportsResponse.OPTIONAL
     )
-    async_register_admin_service(
-        hass, DOMAIN, "check_update", handle_check_update, supports_response=SupportsResponse.OPTIONAL
-    )
-    async_register_admin_service(
-        hass, DOMAIN, "check_updates", handle_check_update, supports_response=SupportsResponse.OPTIONAL
-    )
-
-    # ═══════════════════════════════════════════════════════
-    # VÉRIFICATION AUTOMATIQUE DES MISES À JOUR
-    # ═══════════════════════════════════════════════════════
-
-    async def _check_updates_task(_now=None):
-        try:
-            res = await updater.async_check()
-            if res.get("has_update"):
-                _register_sidebar_panel(has_update=True)
-                hass.bus.async_fire("domolink_mistral_update_available", res)
-                update_ent = hass.data[DOMAIN][entry.entry_id].get("update_entity")
-                if update_ent and getattr(update_ent, "entity_id", None) and getattr(update_ent, "hass", None):
-                    try:
-                        update_ent.async_write_ha_state()
-                    except Exception:
-                        pass
-        except Exception as e:
-            _LOGGER.debug("DomoLink-Mistral IA: Erreur check MAJ automatique: %s", e)
-
-    cancel_init_check = async_call_later(hass, 15, _check_updates_task)
-    cancel_listeners.append(cancel_init_check)
-
-    cancel_periodic_check = async_track_time_interval(
-        hass, _check_updates_task, timedelta(hours=4)
-    )
-    cancel_listeners.append(cancel_periodic_check)
 
     # ═══════════════════════════════════════════════════════
     # PLANIFICATION DES ANALYSES (Live / Boot / Manuel)
