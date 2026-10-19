@@ -47,7 +47,7 @@ from .updater import UpdateManager, get_installed_version
 
 _LOGGER = logging.getLogger(__name__)
 
-PLATFORMS: list[str] = ["sensor", "button", "conversation", "update"]
+PLATFORMS: list[str] = ["sensor", "button", "conversation"]
 
 # ── Schémas de validation pour les services ──
 # Sans ces schémas, HA applique un schéma vide qui rejette tous les paramètres.

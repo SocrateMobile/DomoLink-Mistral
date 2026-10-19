@@ -1,3 +1,4 @@
+from typing import Any
 """Client API Mistral pour DomoLink-Mistral.
 
 Envoie les données système, logs et fichiers YAML à l'API Mistral et parse la réponse JSON structurée.
