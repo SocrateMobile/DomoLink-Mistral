@@ -43,7 +43,6 @@ from .const import (
     STORAGE_KEY,
     STORAGE_VERSION,
 )
-from .updater import UpdateManager, get_installed_version
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -106,12 +105,10 @@ async def _persist_state(data: dict) -> None:
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Configure DomoLink-Mistral depuis une entrée de configuration."""
-    from .updater import UpdateManager
 
     hass.data.setdefault(DOMAIN, {}).setdefault(entry.entry_id, {})
 
     # ── Gestionnaire de mise à jour ──
-    updater = UpdateManager(hass, entry.entry_id)
 
     # ── Stockage persistant pour les erreurs ignorées ──
     store = Store(hass, STORAGE_VERSION, STORAGE_KEY)
@@ -142,7 +139,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         "api_key": entry.data.get("api_key"),
         "options": options,
         "sensor": None,  # Sera peuplé par sensor.py
-        "updater": updater,
         "update_entity": None,
         "store": store,
         "ignored_ids": ignored_ids,
