@@ -570,7 +570,7 @@ class DomolinkMistralPanel extends HTMLElement {
       case "high": return "🔴 Critique";
       case "medium": return "🟠 Moyen";
       case "low": return "🟢 Faible";
-      default: return severity;
+      default: return this._escapeHtml(String(severity || ""));
     }
   }
 
@@ -586,7 +586,7 @@ class DomolinkMistralPanel extends HTMLElement {
       case "script": return "📝 Script";
       case "optimization": return "🚀 Optimisation";
       case "best_practice": return "💡 Bonne pratique";
-      default: return category || "Général";
+      default: return this._escapeHtml(String(category || "Général"));
     }
   }
 
@@ -1007,7 +1007,7 @@ class DomolinkMistralPanel extends HTMLElement {
         ${isError ? "❌" : `<div class="big-spinner"></div>`}
         <h3>Traitement Mistral en cours...</h3>
         <p style="color: var(--primary-color, #03a9f4); font-weight: 600; max-width: 600px; margin: 0 auto;">
-          ${this._currentStatus || "Initialisation..."}
+          ${this._escapeHtml(this._currentStatus || "Initialisation...")}
         </p>
       </div>
     `;
@@ -1185,7 +1185,7 @@ class DomolinkMistralPanel extends HTMLElement {
 
         ${filePath ? `
           <div style="font-size: 0.8em; color: var(--secondary-text-color); margin-top: 6px;">
-            📁 Fichier concerné : <code>${this._escapeHtml(filePath)}</code> ${issue.line ? `(Ligne ${issue.line})` : ""}
+            📁 Fichier concerné : <code>${this._escapeHtml(filePath)}</code> ${issue.line ? `(Ligne ${this._escapeHtml(String(issue.line))})` : ""}
           </div>
         ` : ""}
       </div>
@@ -1412,7 +1412,7 @@ class DomolinkMistralPanel extends HTMLElement {
           <p>${this._escapeHtml(issue.description)}</p>
 
           ${filePath ? `
-            <p><strong>Fichier :</strong> <code>${this._escapeHtml(filePath)}</code> ${issue.line ? `(Ligne ${issue.line})` : ""}</p>
+            <p><strong>Fichier :</strong> <code>${this._escapeHtml(filePath)}</code> ${issue.line ? `(Ligne ${this._escapeHtml(String(issue.line))})` : ""}</p>
           ` : ""}
 
           ${guideText ? `
@@ -1430,9 +1430,14 @@ class DomolinkMistralPanel extends HTMLElement {
     if (!this._confirmData) return "";
     return `
       <div class="modal-overlay">
-        <div class="modal" style="max-width: 450px;">
+        <div class="modal" style="max-width: 550px;">
           <h3 style="margin-top:0;">${this._escapeHtml(this._confirmData.title || "Confirmation")}</h3>
           <p>${this._escapeHtml(this._confirmData.message || "Voulez-vous continuer ?")}</p>
+          ${this._confirmData.details ? `
+            <div style="background: rgba(0,0,0,0.05); padding: 10px; border-radius: 6px; font-family: monospace; font-size: 0.85em; max-height: 200px; overflow-y: auto; white-space: pre-wrap; margin: 12px 0;">
+              ${this._escapeHtml(this._confirmData.details)}
+            </div>
+          ` : ""}
           <div style="display: flex; justify-content: flex-end; gap: 8px; margin-top: 20px;">
             <button class="btn btn-secondary" id="btn-confirm-cancel">Annuler</button>
             <button class="btn btn-warning" id="btn-confirm-ok">Confirmer</button>
@@ -1669,9 +1674,13 @@ class DomolinkMistralPanel extends HTMLElement {
         const issue = this._issues.find(i => i.id === id);
         if (!issue) return;
 
+        const fileStr = issue.file ? `Fichier : ${issue.file}\n` : "";
+        const lineStr = issue.line ? `Ligne : ${issue.line}\n` : "";
+        const scriptStr = issue.auto_fix_script ? `Action : ${JSON.stringify(issue.auto_fix_script, null, 2)}` : "";
         this._confirmData = {
           title: `⚡ Corriger "${issue.title}" ?`,
-          message: "Une sauvegarde sera effectuée avant d'appliquer ce correctif.",
+          message: "Vérifiez les modifications avant application. Une sauvegarde sera effectuée :",
+          details: `${fileStr}${lineStr}${scriptStr}`,
           onConfirm: () => {
             this._isApplying = true;
             this._render();
