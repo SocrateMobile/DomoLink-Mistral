@@ -343,7 +343,6 @@ async def _analyze_all_yaml_files(hass: HomeAssistant) -> str:
     yaml_syntax_errors = []
 
     def _collect_yaml_data():
-        nonlocal all_findings, discovered_files, yaml_syntax_errors
         findings = []
         yaml_excerpts = []
 
