@@ -257,14 +257,13 @@ class DomolinkMistralPanel extends HTMLElement {
     );
     if (!ids.length) return;
 
-    const native = ids.find((id) => id.includes("mise_a_jour")) || ids[0];
-    const nativeAttrs = this._hass.states[native].attributes || {};
-    // La version installée affichée vient de l'entité native (lue sur le disque au démarrage).
-    const installed = this._cleanVersion(nativeAttrs.installed_version);
+    const sourceEntityId = ids.find((id) => this._hass.states[id]?.attributes?.installed_version) || ids[0];
+    const sourceAttrs = this._hass.states[sourceEntityId]?.attributes || {};
+    const installed = this._cleanVersion(sourceAttrs.installed_version);
 
     let latest = installed;
     let hasUpdate = false;
-    let source = this._hass.states[native];
+    let source = this._hass.states[sourceEntityId];
     for (const id of ids) {
       const st = this._hass.states[id];
       const at = st.attributes || {};
@@ -340,15 +339,13 @@ class DomolinkMistralPanel extends HTMLElement {
       }, 3000);
 
       try {
-        await this._hass.callService("domolink_mistral", "perform_update", {
-          restart: true,
-          backup: true,
+        const ids = Object.keys(this._hass?.states || {}).filter((id) => id.startsWith("update.") && id.includes("mistral"));
+        const updateEntityId = ids.find((id) => this._hass.states[id]?.state === "on") || "update.domolink_mistral_update";
+        await this._hass.callService("update", "install", {
+          entity_id: updateEntityId,
         });
       } catch (err) {
-        await this._hass.callService("domolink_mistral", "install_update", {
-          restart: true,
-          backup: true,
-        });
+        console.warn("Update service error:", err);
       }
 
       this._updateProgress = 100;
