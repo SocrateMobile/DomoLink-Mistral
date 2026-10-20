@@ -244,6 +244,57 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             )
 
         websocket_api.async_register_command(hass, ws_get_issues)
+
+        @websocket_api.websocket_command({
+            vol.Required("type"): "domolink_mistral/read_file",
+            vol.Required("file"): str,
+        })
+        @websocket_api.async_response
+        async def ws_read_file(
+            hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict
+        ) -> None:
+            """Lit un fichier du dossier /config."""
+            rel_path = msg["file"].lstrip("/")
+            full_path = os.path.normpath(os.path.join(hass.config.config_dir, rel_path))
+            if not full_path.startswith(hass.config.config_dir):
+                connection.send_error(msg["id"], "forbidden", "Chemin interdit")
+                return
+            if not os.path.exists(full_path):
+                connection.send_error(msg["id"], "not_found", "Fichier introuvable")
+                return
+            def _read():
+                with open(full_path, "r", encoding="utf-8", errors="ignore") as f:
+                    return f.read()
+            content = await hass.async_add_executor_job(_read)
+            connection.send_result(msg["id"], {"file": rel_path, "content": content})
+
+        @websocket_api.websocket_command({
+            vol.Required("type"): "domolink_mistral/write_file",
+            vol.Required("file"): str,
+            vol.Required("content"): str,
+        })
+        @websocket_api.async_response
+        async def ws_write_file(
+            hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict
+        ) -> None:
+            """Écrit un fichier dans le dossier /config avec sauvegarde .bak préalable."""
+            import shutil
+            rel_path = msg["file"].lstrip("/")
+            full_path = os.path.normpath(os.path.join(hass.config.config_dir, rel_path))
+            if not full_path.startswith(hass.config.config_dir):
+                connection.send_error(msg["id"], "forbidden", "Chemin interdit")
+                return
+            content = msg["content"]
+            def _write():
+                if os.path.exists(full_path):
+                    shutil.copy2(full_path, f"{full_path}.bak")
+                with open(full_path, "w", encoding="utf-8") as f:
+                    f.write(content)
+            await hass.async_add_executor_job(_write)
+            connection.send_result(msg["id"], {"file": rel_path, "success": True})
+
+        websocket_api.async_register_command(hass, ws_read_file)
+        websocket_api.async_register_command(hass, ws_write_file)
     except Exception as ws_err:
         _LOGGER.warning("DomoLink-Mistral: Erreur enregistrement commande WS get_issues: %s", ws_err)
 
