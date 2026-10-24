@@ -442,9 +442,9 @@ Analyse le rapport technique ci-dessous et retourne la liste COMPLÈTE de TOUTES
 }}
 
 Format pour "auto_fix_script" :
-- Pour une action via service HA : {{"domain": "automation", "service": "turn_on", "service_data": {{"entity_id": "automation.xyz"}}}}
-- Pour une correction dans un fichier YAML : {{"action_type": "yaml_edit", "file": "automations.yaml", "find": "ancien_texte_a_remplacer", "replace": "nouveau_texte_corrige"}}
-- Si aucune correction automatique sûre n'est possible, mets un tableau vide [].
+- Uniquement pour une action via service HA : {{"domain": "automation", "service": "turn_on", "service_data": {{"entity_id": "automation.xyz"}}}}
+- Les corrections portant sur des fichiers YAML ne doivent JAMAIS utiliser "auto_fix_script" (explique-les uniquement dans "manual_fix").
+- Si aucune correction automatique par service HA n'est possible, mets un tableau vide [].
 
 RÈGLES D'AUDIT CRUCIALES :
 1. COUVERTURE EXHAUSTIVE DE TOUTES LES SECTIONS DU RAPPORT :
@@ -616,28 +616,6 @@ async def _analyze_single(
             result["issues"] = [i for i in result["issues"] if isinstance(i, dict)]
             result["success"] = True
 
-            # Sauvegarde automatique du rapport JSON et de la réponse brute dans /config/
-            try:
-                if not save_report:
-                    raise _SkipSave()
-                def _save_reports():
-                    import json, os
-                    cfg = hass.config.config_dir
-                    report_path = os.path.join(cfg, "domolink_mistral_latest_analysis.json")
-                    with open(report_path, "w", encoding="utf-8") as f:
-                        json.dump(result, f, ensure_ascii=False, indent=2)
-
-                    raw_path = os.path.join(cfg, "domolink_mistral_raw_response.json")
-                    with open(raw_path, "w", encoding="utf-8") as f:
-                        f.write(content)
-
-                await hass.async_add_executor_job(_save_reports)
-                _LOGGER.info("DomoLink-Mistral: Rapport JSON sauvegardé dans domolink_mistral_latest_analysis.json")
-            except _SkipSave:
-                pass
-            except Exception as save_err:
-                _LOGGER.warning("DomoLink-Mistral: Erreur écriture sauvegarde rapport JSON: %s", save_err)
-
             return result
 
     except aiohttp.ClientResponseError as e:
@@ -799,14 +777,6 @@ async def analyze_with_mistral(
     if first_error:
         result["partial"] = True
 
-    try:
-        def _save():
-            import os
-            with open(os.path.join(hass.config.config_dir, "domolink_mistral_latest_analysis.json"), "w", encoding="utf-8") as f:
-                json.dump(result, f, ensure_ascii=False, indent=2)
-        await hass.async_add_executor_job(_save)
-    except Exception as err:
-        _LOGGER.warning("DomoLink-Mistral: Erreur écriture rapport JSON: %s", err)
     return result
 
 
@@ -829,7 +799,15 @@ Règles de génération :
 {{
   "title": "Titre clair de l'automation",
   "description": "Courte description",
-  "yaml": "le code YAML complet prêt à être injecté",
+  "yaml": "le code YAML complet de l'automation",
+  "config": {{
+    "alias": "Titre court et explicite",
+    "description": "Description de ce que fait l'automation",
+    "trigger": [...],
+    "condition": [],
+    "action": [...],
+    "mode": "single"
+  }},
   "explanation": "Explication pas-à-pas en français du fonctionnement de l'automation"
 }}"""
 
@@ -896,6 +874,25 @@ Génère l'automation correspondante au format JSON structuré."""
             data = await response.json()
             content = data["choices"][0]["message"]["content"]
             result = _safe_json_loads(content, normalize_issues=False)
+            if isinstance(result, dict) and not isinstance(result.get("config"), dict):
+                yaml_text = str(result.get("yaml", "")).strip()
+                if yaml_text.startswith("```yaml"):
+                    yaml_text = yaml_text[7:]
+                elif yaml_text.startswith("```"):
+                    yaml_text = yaml_text[3:]
+                if yaml_text.endswith("```"):
+                    yaml_text = yaml_text[:-3]
+                yaml_text = yaml_text.strip()
+                if yaml_text:
+                    try:
+                        import yaml
+                        parsed_yaml = yaml.safe_load(yaml_text)
+                        if isinstance(parsed_yaml, list) and parsed_yaml and isinstance(parsed_yaml[0], dict):
+                            parsed_yaml = parsed_yaml[0]
+                        if isinstance(parsed_yaml, dict):
+                            result["config"] = parsed_yaml
+                    except Exception:
+                        pass
             return {"success": True, "data": result}
     except Exception as e:
         _LOGGER.error("DomoLink-Mistral: Erreur lors de la génération d'automation: %s", e)

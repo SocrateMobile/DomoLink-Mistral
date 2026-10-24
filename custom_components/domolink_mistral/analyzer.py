@@ -105,19 +105,19 @@ async def _get_file_logs(hass: HomeAssistant, max_entries: int = 50, max_scan_li
         hass.config.path("homeassistant.log"),
         hass.config.path("home-assistant.log.1"),
     ]
-    log_file = None
-    for c in candidates:
-        if os.path.exists(c):
-            log_file = c
-            break
-
-    if not log_file:
-        _LOGGER.debug("DomoLink-Mistral: Aucun fichier de log Home Assistant trouvé sur le disque.")
-        return ""
 
     try:
         def read_errors_and_warnings():
             from collections import OrderedDict
+
+            log_file = None
+            for c in candidates:
+                if os.path.exists(c):
+                    log_file = c
+                    break
+
+            if not log_file:
+                return ""
 
             ansi_re = re.compile(r"\x1b\[[0-9;]*[a-zA-Z]")
             entry_pattern = re.compile(
@@ -193,10 +193,10 @@ async def _get_file_logs(hass: HomeAssistant, max_entries: int = 50, max_scan_li
 
         content = await hass.async_add_executor_job(read_errors_and_warnings)
         if content:
-            _LOGGER.debug("DomoLink-Mistral: Erreurs extraites depuis %s", os.path.basename(log_file))
+            _LOGGER.debug("DomoLink-Mistral: Erreurs extraites depuis le fichier de log Home Assistant.")
             return content
     except Exception as e:
-        _LOGGER.error("DomoLink-Mistral: Erreur lecture %s: %s", log_file, e)
+        _LOGGER.error("DomoLink-Mistral: Erreur lecture fichier de log: %s", e)
     return ""
 
 
@@ -637,114 +637,61 @@ async def _get_system_info(hass: HomeAssistant) -> str:
 # ═══════════════════════════════════════════════════════
 
 
-# ═══════════════════════════════════════════════════════
-# SECTION X : Analyse des traces d'automatisation
-# ═══════════════════════════════════════════════════════
-
-async def _get_automation_traces(hass: HomeAssistant) -> str:
-    """Récupère les dernières traces d'automatisations en erreur."""
-    import json
-    import os
-    trace_file = hass.config.path(".storage", "trace.saved_traces")
-    if not os.path.exists(trace_file):
-        return ""
-    try:
-        def read_traces():
-            with open(trace_file, "r", encoding="utf-8", errors="replace") as f:
-                data = json.load(f)
-                if "data" in data and isinstance(data["data"], dict):
-                    traces = []
-                    for auto_id, run_list in sorted(data["data"].items(), key=lambda item: str(item[0])):
-                        for run in run_list:
-                            if isinstance(run, dict):
-                                err = run.get("error")
-                                state = run.get("state")
-                                if err or state in ("stopped", "failed", "error"):
-                                    traces.append(run)
-                    def _get_ts(r):
-                        try:
-                            return r.get("timestamp", {}).get("start", "")
-                        except Exception:
-                            return ""
-                    traces.sort(key=_get_ts)
-                    if not traces:
-                        return ""
-                    formatted = []
-                    for t in traces[-5:]:
-                        item_id = t.get("item_id", "inconnu")
-                        err_msg = t.get("error", "Exécution interrompue ou échouée")
-                        ts = _get_ts(t)
-                        formatted.append(f"- Automation '{item_id}' ({ts}) : {err_msg}")
-                    return "\n".join(formatted)
-            return ""
-            
-        traces_str = await hass.async_add_executor_job(read_traces)
-        if traces_str:
-            return traces_str
-    except Exception as e:
-        _LOGGER.debug("DomoLink-Mistral: Erreur lecture des traces d'automatisations: %s", e)
-    return ""
-
 async def get_recent_logs(hass: HomeAssistant, lines: int = 200) -> str:
     """Collecte complète de l'état du système HA, des fichiers YAML et des logs pour Mistral."""
     sections = []
 
     # 1. Infos système
-    _LOGGER.info("DomoLink-Mistral: [1/9] Collecte des informations système...")
+    _LOGGER.info("DomoLink-Mistral: [1/8] Collecte des informations système...")
     sys_info = await _get_system_info(hass)
     if sys_info:
         sections.append(f"=== INFORMATIONS SYSTÈME ===\n{sys_info}")
 
     # 2. Analyse complète des fichiers YAML (configuration.yaml, !include, automations, scripts, blueprints, esphome)
-    _LOGGER.info("DomoLink-Mistral: [2/9] Analyse de configuration.yaml, des !include, blueprints et ESPHome...")
+    _LOGGER.info("DomoLink-Mistral: [2/8] Analyse de configuration.yaml, des !include, blueprints et ESPHome...")
     yaml_report = await _analyze_all_yaml_files(hass)
     if yaml_report:
         sections.append(yaml_report)
 
     # 3. Logs fichier (Erreurs & avertissements récents sans pollution debug)
-    _LOGGER.info("DomoLink-Mistral: [3/9] Extraction des erreurs de homeassistant.log...")
+    _LOGGER.info("DomoLink-Mistral: [3/8] Extraction des erreurs de homeassistant.log...")
     file_logs = await _get_file_logs(hass)
     if file_logs:
         sections.append(f"=== HOMEASSISTANT.LOG (Erreurs & Avertissements récents) ===\n{file_logs}")
 
     # 4. System log structuré
-    _LOGGER.info("DomoLink-Mistral: [4/9] Lecture du system_log structuré...")
+    _LOGGER.info("DomoLink-Mistral: [4/8] Lecture du system_log structuré...")
     sys_log = await _get_system_log(hass)
     if sys_log:
         sections.append(f"=== SYSTEM_LOG (entrées structurées) ===\n{sys_log}")
 
     # 5. Intégrations en erreur
-    _LOGGER.info("DomoLink-Mistral: [5/9] Vérification des intégrations...")
+    _LOGGER.info("DomoLink-Mistral: [5/8] Vérification des intégrations...")
     integrations = await _get_integration_issues(hass)
     if integrations:
         sections.append(f"=== ÉTAT DES INTÉGRATIONS ===\n{integrations}")
 
     # 6. Entités indisponibles
-    _LOGGER.info("DomoLink-Mistral: [6/9] Détection des entités indisponibles...")
+    _LOGGER.info("DomoLink-Mistral: [6/8] Détection des entités indisponibles...")
     entities = await _get_unavailable_entities(hass)
     if entities:
         sections.append(f"=== ENTITÉS INDISPONIBLES ===\n{entities}")
 
     # 7. Automations
-    _LOGGER.info("DomoLink-Mistral: [7/9] Analyse des automations...")
+    _LOGGER.info("DomoLink-Mistral: [7/8] Analyse des automations...")
     automations = await _get_automations_report(hass)
     if automations:
         sections.append(f"=== AUTOMATIONS ===\n{automations}")
 
     # 8. Scripts
-    _LOGGER.info("DomoLink-Mistral: [8/9] Analyse des scripts...")
+    _LOGGER.info("DomoLink-Mistral: [8/8] Analyse des scripts...")
     scripts = await _get_scripts_report(hass)
     if scripts:
         sections.append(f"=== SCRIPTS ===\n{scripts}")
 
-
-    # 9. Traces d'automatisations
-    _LOGGER.info("DomoLink-Mistral: [9/9] Analyse des traces...")
-    traces = await _get_automation_traces(hass)
-    if traces:
-        sections.append(f"=== TRACES D'AUTOMATISATIONS (Récentes) ===\n{traces}")
-
     if not sections:
+        _LOGGER.warning("DomoLink-Mistral: Aucune donnée collectée.")
+        return ""
 
         _LOGGER.warning("DomoLink-Mistral: Aucune donnée collectée.")
         return ""
