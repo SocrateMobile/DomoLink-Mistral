@@ -1,17 +1,7 @@
 """Constantes pour l'intégration Domolink-Mistral."""
 
-import json
-import os
-
 DOMAIN = "domolink_mistral"
-
-# Source unique de vérité : la version est lue directement depuis manifest.json (requis par HA & HACS)
-_MANIFEST_PATH = os.path.join(os.path.dirname(__file__), "manifest.json")
-try:
-    with open(_MANIFEST_PATH, "r", encoding="utf-8") as _f:
-        VERSION = json.load(_f).get("version", "unknown")
-except Exception:
-    VERSION = "unknown"
+VERSION = "1.1.14"
 
 CONF_API_KEY = "api_key"
 CONF_MODEL = "model"
@@ -56,17 +46,6 @@ BLOCKED_SERVICES = {
     "hassio.host_shutdown",
     "hassio.host_reboot",
     "hassio.addon_stop",
-}
-
-# Fichiers YAML autorisés pour la modification automatique
-ALLOWED_YAML_FILES = {
-    "configuration.yaml",
-    "automations.yaml",
-    "automation.yaml",
-    "scripts.yaml",
-    "script.yaml",
-    "scenes.yaml",
-    "scene.yaml",
 }
 
 STORAGE_KEY = "domolink_mistral.ignored_issues"

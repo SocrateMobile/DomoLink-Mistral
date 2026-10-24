@@ -4,11 +4,11 @@ analyze_now:
 
 apply_fix:
   name: Apply a fix
-  description: Applies an automatic fix for a specific issue (service calls or YAML modifications).
+  description: Applies an automatic fix for a specific issue via Home Assistant service calls.
   fields:
     fix_script:
       name: Fix script
-      description: JSON array of Home Assistant service calls or YAML edits to execute.
+      description: JSON array of Home Assistant service calls to execute.
       required: true
       selector:
         text:
@@ -43,27 +43,15 @@ unignore_issue:
 
 apply_all_fixes:
   name: Apply all fixes
-  description: Creates a backup then applies all available automatic fixes sequentially.
+  description: Creates a backup then applies all available automatic service fixes sequentially.
 
 generate_automation:
   name: Generate automation
-  description: Generates a complete Home Assistant automation YAML using Mistral AI from natural language.
+  description: Generates a complete Home Assistant automation using Mistral AI from natural language.
   fields:
     prompt:
       name: Description
       description: What you want the automation to do in natural language.
-      required: true
-      selector:
-        text:
-          multiline: true
-
-save_automation:
-  name: Save automation
-  description: Appends a generated automation into automations.yaml and reloads automations.
-  fields:
-    yaml:
-      name: Automation YAML
-      description: The YAML content of the automation to add.
       required: true
       selector:
         text:
@@ -125,10 +113,3 @@ generate_daily_briefing:
       required: false
       selector:
         text:
-
-rollback_latest_fix:
-  name: Rollback latest fix
-  description: Restores the latest YAML backup made before an automatic fix.
-
-
-

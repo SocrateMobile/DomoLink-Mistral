@@ -12,7 +12,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-import shutil
 from datetime import timedelta
 
 import voluptuous as vol
@@ -60,10 +59,6 @@ ISSUE_ID_SCHEMA = vol.Schema({
     vol.Required("issue_id"): cv.string,
 })
 
-SAVE_AUTOMATION_SCHEMA = vol.Schema({
-    vol.Required("yaml"): cv.string,
-})
-
 GENERATE_AUTOMATION_SCHEMA = vol.Schema({
     vol.Required("prompt"): cv.string,
 })
@@ -78,11 +73,6 @@ ANALYZE_IMAGE_SCHEMA = vol.Schema({
 DAILY_BRIEFING_SCHEMA = vol.Schema({
     vol.Optional("time_of_day", default="auto"): cv.string,
     vol.Optional("custom_instruction"): cv.string,
-})
-
-UPDATE_SCHEMA = vol.Schema({
-    vol.Optional("restart", default=True): cv.boolean,
-    vol.Optional("backup", default=True): cv.boolean,
 })
 
 
@@ -139,7 +129,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         "api_key": entry.data.get("api_key"),
         "options": options,
         "sensor": None,  # Sera peuplé par sensor.py
-        "update_entity": None,
         "store": store,
         "ignored_ids": ignored_ids,
         "last_issues": restored_issues,  # Derniers résultats Mistral (restaurés depuis le disque)
@@ -190,16 +179,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     mtime = await hass.async_add_executor_job(_get_mtime)
 
-    def _register_sidebar_panel(has_update: bool = False):
-        title = "DomoLink-Mistral IA 🔴" if has_update else "DomoLink-Mistral IA"
-        icon = "mdi:shield-alert" if has_update else "mdi:brain"
+    def _register_sidebar_panel():
         ver = VERSION
         try:
             async_register_built_in_panel(
                 hass,
                 component_name="custom",
-                sidebar_title=title,
-                sidebar_icon=icon,
+                sidebar_title="DomoLink-Mistral IA",
+                sidebar_icon="mdi:brain",
                 frontend_url_path="domolink_mistral",
                 config={
                     "_panel_custom": {
@@ -213,7 +200,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         except Exception:
             pass
 
-    _register_sidebar_panel(has_update=False)
+    _register_sidebar_panel()
 
     # ── Commande WebSocket pour fournir l'intégralité des anomalies sans limite de taille recorder ──
     try:
@@ -225,6 +212,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         @websocket_api.websocket_command({
             vol.Required("type"): ws_cmd_type,
         })
+        @websocket_api.require_admin
         @websocket_api.async_response
         async def ws_get_issues(
             hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict
@@ -244,57 +232,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             )
 
         websocket_api.async_register_command(hass, ws_get_issues)
-
-        @websocket_api.websocket_command({
-            vol.Required("type"): "domolink_mistral/read_file",
-            vol.Required("file"): str,
-        })
-        @websocket_api.async_response
-        async def ws_read_file(
-            hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict
-        ) -> None:
-            """Lit un fichier du dossier /config."""
-            rel_path = msg["file"].lstrip("/")
-            full_path = os.path.normpath(os.path.join(hass.config.config_dir, rel_path))
-            if not full_path.startswith(hass.config.config_dir):
-                connection.send_error(msg["id"], "forbidden", "Chemin interdit")
-                return
-            if not os.path.exists(full_path):
-                connection.send_error(msg["id"], "not_found", "Fichier introuvable")
-                return
-            def _read():
-                with open(full_path, "r", encoding="utf-8", errors="ignore") as f:
-                    return f.read()
-            content = await hass.async_add_executor_job(_read)
-            connection.send_result(msg["id"], {"file": rel_path, "content": content})
-
-        @websocket_api.websocket_command({
-            vol.Required("type"): "domolink_mistral/write_file",
-            vol.Required("file"): str,
-            vol.Required("content"): str,
-        })
-        @websocket_api.async_response
-        async def ws_write_file(
-            hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict
-        ) -> None:
-            """Écrit un fichier dans le dossier /config avec sauvegarde .bak préalable."""
-            import shutil
-            rel_path = msg["file"].lstrip("/")
-            full_path = os.path.normpath(os.path.join(hass.config.config_dir, rel_path))
-            if not full_path.startswith(hass.config.config_dir):
-                connection.send_error(msg["id"], "forbidden", "Chemin interdit")
-                return
-            content = msg["content"]
-            def _write():
-                if os.path.exists(full_path):
-                    shutil.copy2(full_path, f"{full_path}.bak")
-                with open(full_path, "w", encoding="utf-8") as f:
-                    f.write(content)
-            await hass.async_add_executor_job(_write)
-            connection.send_result(msg["id"], {"file": rel_path, "success": True})
-
-        websocket_api.async_register_command(hass, ws_read_file)
-        websocket_api.async_register_command(hass, ws_write_file)
     except Exception as ws_err:
         _LOGGER.warning("DomoLink-Mistral: Erreur enregistrement commande WS get_issues: %s", ws_err)
 
@@ -692,37 +629,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 sensor.set_status(f"❌ Échec génération automation : {err}")
             return {"success": False, "error": err}
 
-    async def handle_save_automation(call):
-        """Service : domolink_mistral.save_automation"""
-        from .reparator import append_automation_to_yaml
-
-        yaml_content = call.data.get("yaml", "").strip()
-        if not yaml_content:
-            _LOGGER.error("DomoLink-Mistral: Code YAML vide.")
-            return {"success": False, "error": "Code YAML vide"}
-
-        sensor = hass.data[DOMAIN][entry.entry_id].get("sensor")
-        if sensor:
-            sensor.set_status("💾 Enregistrement de l'automation dans automations.yaml...")
-
-        res = await append_automation_to_yaml(hass, yaml_content)
-        if sensor:
-            if res.get("success"):
-                sensor.set_status("✅ Automation injectée et active dans Home Assistant !")
-            else:
-                sensor.set_status(f"❌ {res.get('message')}")
-
-        await hass.services.async_call(
-            "persistent_notification",
-            "create",
-            {
-                "title": "🧠 DomoLink-Mistral — Automation ajoutée",
-                "message": res.get("message", "Opération terminée."),
-                "notification_id": "domolink_mistral_auto_created",
-            },
-        )
-        return res
-
     async def handle_analyze_image(call):
         """Service : domolink_mistral.analyze_image (Vision par Pixtral)."""
         import base64
@@ -874,27 +780,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 sensor.set_status(f"❌ Échec briefing : {err}")
             return {"success": False, "error": err}
 
-    async def handle_rollback(call: ServiceCall):
-        from .reparator import rollback_latest_fix
-        res = await rollback_latest_fix(hass)
-        if res.get("success"):
-            # Update frontend to trigger a reload or show success
-            hass.bus.async_fire("domolink_mistral_rollback_success", res)
-        else:
-            hass.bus.async_fire("domolink_mistral_rollback_failed", res)
-        return res
-
     # ── Enregistrement des services ──
     from homeassistant.helpers.service import async_register_admin_service
 
-    # Services d'administration (modification YAML, exécution de correctifs et analyses)
-    async_register_admin_service(hass, DOMAIN, "rollback_latest_fix", handle_rollback)
+    # Services d'administration (exécution de correctifs et analyses)
     async_register_admin_service(hass, DOMAIN, "apply_fix", handle_apply_fix, schema=APPLY_FIX_SCHEMA)
     async_register_admin_service(hass, DOMAIN, "apply_all_fixes", handle_apply_all_fixes)
-    async_register_admin_service(
-        hass, DOMAIN, "save_automation", handle_save_automation,
-        schema=SAVE_AUTOMATION_SCHEMA, supports_response=SupportsResponse.OPTIONAL
-    )
 
     # Services de diagnostic et d'assistance IA (réservés aux administrateurs pour protéger le quota et les accès système)
     async_register_admin_service(hass, DOMAIN, "analyze_now", handle_analyze_now)
@@ -984,14 +875,8 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         "unignore_issue",
         "apply_all_fixes",
         "generate_automation",
-        "save_automation",
         "analyze_image",
         "generate_daily_briefing",
-        "check_update",
-        "check_updates",
-        "perform_update",
-        "install_update",
-        "rollback_latest_fix",
     ]:
         hass.services.async_remove(DOMAIN, service_name)
 

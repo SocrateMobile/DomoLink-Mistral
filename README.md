@@ -1,22 +1,16 @@
 # 🧠 DomoLink-Mistral IA pour Home Assistant
 
-[![HACS Compatible](https://img.shields.io/badge/HACS-Custom-blue.svg)](https://github.com/SocrateMobile/DomoLink-Mistral)
-[![Version](https://img.shields.io/badge/version---help-green.svg)](https://github.com/SocrateMobile/DomoLink-Mistral/releases)
+[![HACS](https://img.shields.io/badge/HACS-Default-blue.svg)](https://github.com/SocrateMobile/DomoLink-Mistral)
+[![Version](https://img.shields.io/badge/version-1.1.14-green.svg)](https://github.com/SocrateMobile/DomoLink-Mistral/releases)
 [![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-Socrate-FFDD00?logo=buy-me-a-coffee&logoColor=000000)](https://buymeacoffee.com/Socrate)
 
 [![Buy Me A Coffee](https://img.buymeacoffee.com/button-api/?text=Buy+me+a+coffee&emoji=☕&slug=Socrate&button_colour=FFDD00&font_colour=000000&font_family=Poppins&outline_colour=000000&coffee_colour=ffffff)](https://www.buymeacoffee.com/Socrate)
 
 DomoLink-Mistral IA est une intégration puissante pour Home Assistant qui connecte votre maison intelligente à l'intelligence artificielle **Mistral AI**. Elle agit comme un **assistant de diagnostic, d'automatisation et d'optimisation** pour votre installation domotique.
 
-L'intégration analyse intelligemment vos journaux d'erreurs (`system_log` et `homeassistant.log`), détecte les anomalies, et vous propose des solutions précises pas-à-pas pour les résoudre. Elle peut même appliquer certaines corrections automatiquement après avoir sécurisé votre configuration avec une sauvegarde !
+L'intégration analyse intelligemment vos journaux d'erreurs (`system_log` et `homeassistant.log`), détecte les anomalies, et vous propose des solutions précises pas-à-pas pour les résoudre. Elle peut également exécuter certaines corrections de services automatiquement après confirmation.
 
 ## ✨ Fonctionnalités
-
-### 🚀 Mises à Jour Automatiques
-- **Pastille latérale dynamique** : Pastille d'alerte rouge `MAJ` injectée sur le menu et l'icône Home Assistant.
-- **Entité native HA `update.domolink_mistral`** : Intégration officielle au centre de mises à jour de Home Assistant (HACS).
-- **Bouton d'action et bandeau supérieur** : Affichage instantané dès qu'une release GitHub est publiée.
-- **Modale avec Changelog complet** : Comparateur de versions, notes de release officielles et progression en direct.
 
 ### 🔍 Détection d'erreurs par l'IA
 - Analyse automatique des logs Home Assistant via Mistral AI
@@ -26,13 +20,13 @@ L'intégration analyse intelligemment vos journaux d'erreurs (`system_log` et `h
 ### 🔒 Sécurité intégrée
 - **Filtre de confidentialité** : mots de passe, tokens, adresses IP et clés API sont masqués localement avant tout envoi
 - **Whitelist de services** : seuls les services HA autorisés peuvent être exécutés automatiquement
-- **Sauvegarde automatique** avant chaque correction
+- **Sauvegarde automatique** avant l'application de correctifs
 
 ### 🎛️ Panneau de résolution interactif
 Un panneau dédié **DomoLink-Mistral IA** dans la barre latérale de Home Assistant avec 6 onglets :
 - **🛡️ Diagnostic & Audit** : analyse globale de santé
-- **🔧 Réparation Sécurisée** : correctifs manuels et automatiques validés individuellement
-- **✨ Générateur IA** : création d'automations intelligentes en langage naturel
+- **🔧 Réparation Sécurisée** : guides manuels et correctifs de services validés
+- **✨ Générateur IA** : création d'automations intelligentes en langage naturel via l'API Home Assistant
 - **🎙️ Assist Vocal & Écrit** : agent conversationnel officiel HA Assist avec pilotage domotique
 - **👁️ Vision & Caméras** : analyse de sécurité et snapshots avec Pixtral
 - **📰 Smart Briefing** : synthèse vocale quotidienne intelligente
@@ -46,11 +40,11 @@ Un panneau dédié **DomoLink-Mistral IA** dans la barre latérale de Home Assis
 
 ### Via HACS (Recommandé)
 1. Ouvrez **HACS** dans Home Assistant
-2. Cliquez sur **Intégrations** > ⋮ > **Dépôts personnalisés**
-3. Ajoutez `https://github.com/SocrateMobile/DomoLink-Mistral` (catégorie : **Intégration**)
-4. Installez **DomoLink-Mistral IA** et redémarrez Home Assistant
-5. Allez dans *Paramètres > Appareils et services > Ajouter une intégration* > **DomoLink-Mistral IA**
-6. Entrez votre clé API Mistral (disponible sur [console.mistral.ai](https://console.mistral.ai))
+2. Recherchez **DomoLink-Mistral IA** et cliquez sur **Télécharger**
+   *(Si l'intégration n'est pas encore visible dans le catalogue par défaut : cliquez sur **⋮** > **Dépôts personnalisés**, ajoutez `https://github.com/SocrateMobile/DomoLink-Mistral` en catégorie **Intégration**, puis téléchargez-la)*
+3. Redémarrez Home Assistant
+4. Allez dans *Paramètres > Appareils et services > Ajouter une intégration* > **DomoLink-Mistral IA**
+5. Entrez votre clé API Mistral (disponible sur [console.mistral.ai](https://console.mistral.ai))
 
 ### Installation manuelle
 1. Copiez le dossier `custom_components/domolink_mistral` dans votre répertoire `config/custom_components/`
@@ -80,10 +74,13 @@ hold_action:
 | Service | Description |
 |---------|-------------|
 | `domolink_mistral.analyze_now` | Lance une analyse immédiate des logs |
-| `domolink_mistral.apply_fix` | Applique un correctif spécifique |
-| `domolink_mistral.apply_all_fixes` | Sauvegarde puis corrige tout |
+| `domolink_mistral.apply_fix` | Applique un correctif de service spécifique |
+| `domolink_mistral.apply_all_fixes` | Applique tous les correctifs de services disponibles |
 | `domolink_mistral.ignore_issue` | Ignore une erreur spécifique |
 | `domolink_mistral.unignore_issue` | Réactive une erreur ignorée |
+| `domolink_mistral.generate_automation` | Génère une automation en langage naturel |
+| `domolink_mistral.analyze_image` | Analyse une image ou caméra avec Pixtral Vision |
+| `domolink_mistral.generate_daily_briefing` | Génère le briefing quotidien de la maison |
 
 ### Automatisations
 Exemple : recevoir une notification si Mistral détecte des erreurs critiques :

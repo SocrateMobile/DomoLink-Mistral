@@ -89,7 +89,21 @@ def update_version_files(new_ver: str) -> None:
         f.write("\n")
     print(f"Updated {MANIFEST_PATH} -> {new_ver}")
 
-    # 2. README.md (Badge GitHub)
+    # 2. const.py
+    if os.path.exists(CONST_PATH):
+        with open(CONST_PATH, "r", encoding="utf-8") as f:
+            const_content = f.read()
+        const_content = re.sub(
+            r'^VERSION\s*=\s*"[^"]*"',
+            f'VERSION = "{new_ver}"',
+            const_content,
+            flags=re.MULTILINE,
+        )
+        with open(CONST_PATH, "w", encoding="utf-8") as f:
+            f.write(const_content)
+        print(f"Updated {CONST_PATH} -> {new_ver}")
+
+    # 3. README.md (Badge GitHub)
     if os.path.exists(README_PATH):
         with open(README_PATH, "r", encoding="utf-8") as f:
             readme_content = f.read()

@@ -3,48 +3,38 @@
 Responsabilités :
 - Déclenchement de sauvegardes de sécurité avant toute modification
 - Exécution sécurisée des correctifs de services Home Assistant (avec whitelist)
-- Application sécurisée des corrections dans les fichiers YAML (avec backup .bak et validation)
-- Rechargement automatique des configurations après modification
 """
-import os
-import shutil
-import logging
+import asyncio
 import json
-from datetime import datetime
+import logging
 
 from homeassistant.core import HomeAssistant
 
-from .const import ALLOWED_FIX_DOMAINS, BLOCKED_SERVICES, ALLOWED_YAML_FILES
+from .const import ALLOWED_FIX_DOMAINS, BLOCKED_SERVICES
 
 _LOGGER = logging.getLogger(__name__)
 
 
 async def trigger_backup(hass: HomeAssistant) -> bool:
     """Déclenche une sauvegarde de sécurité avant d'appliquer une modification.
-    
+
     Tente une sauvegarde globale via Home Assistant ou Supervisor (avec timeout de sécurité).
-    Si le service de backup global échoue ou n'est pas configuré sur l'instance,
-    la réparation se poursuit en toute sécurité grâce aux copies locales atomiques (.bak)
-    et au mécanisme de rollback instantané gérés par _apply_yaml_file_fix.
     """
-    import asyncio
     try:
         # HA 2023.x+ : service natif backup.create
         if hass.services.has_service("backup", "create"):
             _LOGGER.info("DomoLink-Mistral: Déclenchement de la sauvegarde système préalable...")
             try:
-                # Timeout de 45 secondes pour ne pas bloquer indéfiniment l'interface utilisateur
                 await asyncio.wait_for(
                     hass.services.async_call("backup", "create", {}, blocking=True),
-                    timeout=45.0
+                    timeout=45.0,
                 )
                 _LOGGER.info("DomoLink-Mistral: Sauvegarde système préalable complétée avec succès.")
                 return True
             except (asyncio.TimeoutError, Exception) as be:
                 _LOGGER.warning(
-                    "DomoLink-Mistral: Le service backup.create a échoué ou a dépassé le délai (%s). "
-                    "Poursuite avec la sauvegarde locale atomique (.bak).",
-                    be
+                    "DomoLink-Mistral: Le service backup.create a échoué ou a dépassé le délai (%s).",
+                    be,
                 )
                 return True
 
@@ -54,29 +44,24 @@ async def trigger_backup(hass: HomeAssistant) -> bool:
             try:
                 await asyncio.wait_for(
                     hass.services.async_call("hassio", "backup_full", {}, blocking=True),
-                    timeout=45.0
+                    timeout=45.0,
                 )
                 _LOGGER.info("DomoLink-Mistral: Sauvegarde Supervisor complétée avec succès.")
                 return True
             except (asyncio.TimeoutError, Exception) as se:
                 _LOGGER.warning(
-                    "DomoLink-Mistral: Le service hassio.backup_full a échoué ou a dépassé le délai (%s). "
-                    "Poursuite avec la sauvegarde locale atomique (.bak).",
-                    se
+                    "DomoLink-Mistral: Le service hassio.backup_full a échoué ou a dépassé le délai (%s).",
+                    se,
                 )
                 return True
 
-        _LOGGER.debug(
-            "DomoLink-Mistral: Aucun service de backup global actif. "
-            "La sécurité s'appuiera sur la copie locale atomique .bak."
-        )
+        _LOGGER.debug("DomoLink-Mistral: Aucun service de backup global actif.")
         return True
 
     except Exception as e:
         _LOGGER.warning(
-            "DomoLink-Mistral: Impossible d'exécuter la sauvegarde système globale: %s. "
-            "Poursuite sécurisée via la copie locale .bak.",
-            e
+            "DomoLink-Mistral: Impossible d'exécuter la sauvegarde système globale: %s.",
+            e,
         )
         return True
 
@@ -92,201 +77,16 @@ def _is_service_allowed(domain: str, service: str) -> bool:
     if domain not in ALLOWED_FIX_DOMAINS:
         _LOGGER.warning(
             "DomoLink-Mistral: Domaine '%s' non autorisé pour l'auto-fix. Domaines autorisés: %s",
-            domain, ", ".join(sorted(ALLOWED_FIX_DOMAINS)),
+            domain,
+            ", ".join(sorted(ALLOWED_FIX_DOMAINS)),
         )
         return False
 
     return True
 
 
-def _apply_yaml_file_fix(hass: HomeAssistant, file_rel_path: str, find_text: str = None, replace_text: str = None, new_content: str = None) -> dict:
-    """Modifie un fichier YAML de manière sécurisée avec backup préalable."""
-    real_config_dir = os.path.realpath(hass.config.config_dir)
-    target_path = os.path.realpath(os.path.join(real_config_dir, file_rel_path))
-
-    # Sécurité 1 : interdire de sortir du dossier config (path traversal)
-    try:
-        common = os.path.commonpath([real_config_dir, target_path])
-        if common != real_config_dir:
-            _LOGGER.error("DomoLink-Mistral: Tentative de path traversal rejetée: %s", file_rel_path)
-            return {"success": False, "reason": "Chemin interdit (en dehors de config)"}
-    except Exception:
-        return {"success": False, "reason": "Chemin invalide"}
-
-    # Sécurité 2 : interdire les fichiers et dossiers sensibles (secrets.yaml, .storage, custom_components)
-    norm_rel = os.path.relpath(target_path, real_config_dir).replace("\\", "/")
-    base_name = os.path.basename(target_path)
-
-    if (
-        norm_rel == "secrets.yaml"
-        or norm_rel.endswith("/secrets.yaml")
-        or norm_rel.startswith(".storage")
-        or "/.storage" in norm_rel
-        or norm_rel.startswith("custom_components")
-        or "/custom_components" in norm_rel
-    ):
-        _LOGGER.error("DomoLink-Mistral: Accès interdit à un fichier ou dossier sensible: %s", norm_rel)
-        return {"success": False, "reason": "Fichier sensible protégé (modification interdite)"}
-
-    # Sécurité 3 : extensions autorisées (.yaml ou .yml uniquement)
-    if not (norm_rel.endswith(".yaml") or norm_rel.endswith(".yml")):
-        _LOGGER.error("DomoLink-Mistral: Extension non autorisée: %s", norm_rel)
-        return {"success": False, "reason": "Seuls les fichiers .yaml et .yml sont autorisés"}
-
-    # Sécurité 4 : vérifier que le fichier est autorisé (whitelist stricte à la racine ou sous-dossiers autorisés)
-    is_allowed = (
-        norm_rel in ALLOWED_YAML_FILES
-        or norm_rel.startswith("esphome/")
-        or norm_rel.startswith("blueprints/")
-    )
-    if not is_allowed:
-        _LOGGER.error("DomoLink-Mistral: Chemin de fichier non autorisé pour modification: %s", norm_rel)
-        return {"success": False, "reason": f"Fichier non autorisé: {norm_rel}"}
-
-    if not os.path.exists(target_path) and new_content is None:
-        return {"success": False, "reason": f"Fichier introuvable: {file_rel_path}"}
-
-    # Interdire le remplacement intégral sur un fichier existant pour éviter tout écrasement accidentel
-    if os.path.exists(target_path) and not find_text:
-        _LOGGER.error("DomoLink-Mistral: Remplacement intégral interdit pour le fichier existant %s", file_rel_path)
-        return {
-            "success": False,
-            "reason": "Remplacement intégral interdit sur un fichier existant (seul le remplacement ciblé find/replace unique est autorisé)",
-        }
-
-    # 1. Calcul du nouveau contenu
-    try:
-        if not os.path.exists(target_path) and new_content is not None:
-            updated = new_content
-        else:
-            with open(target_path, "r", encoding="utf-8") as f:
-                original = f.read()
-
-            # Normalisation systématique des fins de ligne (\r\n -> \n) pour compatibilité tous OS
-            original_norm = original.replace("\r\n", "\n")
-            find_norm = find_text.replace("\r\n", "\n") if find_text else ""
-            replace_norm = replace_text.replace("\r\n", "\n") if replace_text else ""
-
-            if not find_norm or find_norm not in original_norm:
-                return {"success": False, "reason": f"Texte cible non trouvé dans {file_rel_path}"}
-
-            occurrences = original_norm.count(find_norm)
-            if occurrences > 1:
-                _LOGGER.warning("DomoLink-Mistral: Le texte cible apparaît %s fois dans %s", occurrences, file_rel_path)
-                return {
-                    "success": False,
-                    "reason": f"Texte cible ambigu (trouvé {occurrences} fois dans {file_rel_path}), modification annulée par sécurité",
-                }
-
-            # Remplacement ciblé de l'unique occurrence sur le contenu normalisé
-            updated = original_norm.replace(find_norm, replace_norm, 1)
-
-        # 2. Validation stricte de la syntaxe YAML avant toute modification ou création de backup
-        try:
-            import yaml
-            class _SafeLoader(yaml.SafeLoader):
-                pass
-            def _dummy(loader, tag, node):
-                return None
-            _SafeLoader.add_multi_constructor("!", _dummy)
-            yaml.load(updated, Loader=_SafeLoader)
-        except Exception as yaml_err:
-            _LOGGER.error("DomoLink-Mistral: La modification produirait un YAML invalide: %s", yaml_err)
-            return {"success": False, "reason": f"Syntaxe YAML invalide dans le correctif: {yaml_err}"}
-
-        # 3. Création du backup .bak uniquement APRÈS validation YAML réussie
-        orig_mode = None
-        if os.path.exists(target_path):
-            try:
-                orig_mode = os.stat(target_path).st_mode & 0o777
-            except Exception:
-                orig_mode = None
-
-            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-            backup_path = f"{target_path}.{ts}.bak"
-            try:
-                shutil.copy2(target_path, backup_path)
-                _LOGGER.info("DomoLink-Mistral: Backup créé -> %s", backup_path)
-            except Exception as e:
-                return {"success": False, "reason": f"Échec de la sauvegarde préalable: {e}"}
-
-            # Enregistrer pour le rollback sous le namespace DOMAIN cloisonné
-            from .const import DOMAIN
-            domain_data = hass.data.setdefault(DOMAIN, {})
-            # Stockage dans le premier entry_id disponible ou sous _rollbacks dans le namespace DOMAIN
-            rollbacks_list = None
-            for key, val in domain_data.items():
-                if isinstance(val, dict) and "rollbacks" in val:
-                    rollbacks_list = val["rollbacks"]
-                    break
-            if rollbacks_list is None:
-                domain_data.setdefault("_rollbacks", [])
-                rollbacks_list = domain_data["_rollbacks"]
-            rollbacks_list.append({"file": target_path, "backup": backup_path})
-
-        # 4. Écriture atomique sécurisée via fichier temporaire avec préservation des droits chmod
-        import tempfile
-        dir_name = os.path.dirname(target_path)
-        os.makedirs(dir_name, exist_ok=True)
-        with tempfile.NamedTemporaryFile("w", dir=dir_name, delete=False, encoding="utf-8") as tf:
-            tf.write(updated)
-            temp_path = tf.name
-
-        if orig_mode is not None:
-            try:
-                os.chmod(temp_path, orig_mode)
-            except Exception as chmod_err:
-                _LOGGER.debug("DomoLink-Mistral: Impossible d'ajuster les permissions chmod: %s", chmod_err)
-
-        os.replace(temp_path, target_path)
-
-        _LOGGER.info("DomoLink-Mistral: Fichier %s modifié avec succès.", file_rel_path)
-        return {"success": True, "file": file_rel_path}
-
-    except Exception as e:
-        _LOGGER.error("DomoLink-Mistral: Erreur écriture %s: %s", file_rel_path, e)
-        return {"success": False, "reason": str(e)}
-
-
-
-async def rollback_latest_fix(hass: HomeAssistant) -> dict:
-    """Annule la dernière modification YAML."""
-    from .const import DOMAIN
-    domain_data = hass.data.get(DOMAIN, {})
-    rollbacks = None
-    for key, val in domain_data.items():
-        if isinstance(val, dict) and "rollbacks" in val:
-            rollbacks = val["rollbacks"]
-            break
-    if rollbacks is None:
-        rollbacks = domain_data.get("_rollbacks", [])
-
-    if not rollbacks:
-        return {"success": False, "reason": "Aucune sauvegarde de fichier récente en mémoire."}
-
-    last_rollback = rollbacks.pop()
-    target_path = last_rollback["file"]
-    backup_path = last_rollback["backup"]
-    
-    try:
-        def do_rollback():
-            import shutil, os
-            if os.path.exists(backup_path):
-                shutil.copy2(backup_path, target_path)
-                return True
-            return False
-            
-        success = await hass.async_add_executor_job(do_rollback)
-        if success:
-            return {"success": True, "message": f"Fichier {os.path.basename(target_path)} restauré avec succès !"}
-        else:
-            return {"success": False, "reason": "Le fichier de sauvegarde n'existe plus."}
-    except Exception as e:
-        return {"success": False, "reason": str(e)}
-
 async def apply_fix(hass: HomeAssistant, fix_payload) -> dict:
-
-    """Exécute de manière sécurisée les correctifs proposés par Mistral (Services ou Fichiers YAML).
+    """Exécute de manière sécurisée les correctifs proposés par Mistral (appels de services Home Assistant uniquement).
 
     Retourne un dict avec le résultat : {"success": bool, "applied": int, "skipped": int, "details": list}
     """
@@ -311,34 +111,17 @@ async def apply_fix(hass: HomeAssistant, fix_payload) -> dict:
     applied = 0
     skipped = 0
     details = []
-    yaml_files_modified = set()
 
     for action in actions:
         if not isinstance(action, dict):
             continue
 
         action_type = action.get("action_type", "")
-
-        # ── CAS 1 : Modification de fichier YAML ──
         if action_type in ("yaml_edit", "yaml_write") or ("file" in action and "service" not in action and "domain" not in action):
-            file_path = action.get("file", "")
-            find_txt = action.get("find")
-            replace_txt = action.get("replace")
-            new_cont = action.get("content") or action.get("new_content")
-
-            res = await hass.async_add_executor_job(
-                _apply_yaml_file_fix, hass, file_path, find_txt, replace_txt, new_cont
-            )
-            if res.get("success"):
-                applied += 1
-                yaml_files_modified.add(file_path)
-                details.append(f"Fichier modifié: {file_path}")
-            else:
-                skipped += 1
-                details.append(f"Échec {file_path}: {res.get('reason')}")
+            skipped += 1
+            details.append("Modification YAML ignorée (consultez le guide manuel)")
             continue
 
-        # ── CAS 2 : Appel de service Home Assistant standard ──
         domain = action.get("domain", "")
         service = action.get("service", "")
         data = action.get("service_data", {})
@@ -346,12 +129,6 @@ async def apply_fix(hass: HomeAssistant, fix_payload) -> dict:
         if not domain or not service:
             skipped += 1
             continue
-
-        if domain == "homeassistant" and service == "restart":
-            if hass.services.has_service("restart_ha", "start_process"):
-                domain = "restart_ha"
-                service = "start_process"
-                data = {"action": "quick_restart"}
 
         # Vérification de sécurité
         if not _is_service_allowed(domain, service):
@@ -376,136 +153,6 @@ async def apply_fix(hass: HomeAssistant, fix_payload) -> dict:
             skipped += 1
             details.append(f"Erreur {domain}.{service}: {e}")
 
-    # ── Rechargement automatique des configurations si des fichiers YAML ont été modifiés ──
-    for modified_file in yaml_files_modified:
-        try:
-            if "automation" in modified_file and hass.services.has_service("automation", "reload"):
-                await hass.services.async_call("automation", "reload", {}, blocking=False)
-            elif "script" in modified_file and hass.services.has_service("script", "reload"):
-                await hass.services.async_call("script", "reload", {}, blocking=False)
-            elif "scene" in modified_file and hass.services.has_service("scene", "reload"):
-                await hass.services.async_call("scene", "reload", {}, blocking=False)
-            elif "configuration.yaml" in modified_file and hass.services.has_service("homeassistant", "reload_core_config"):
-                await hass.services.async_call("homeassistant", "reload_core_config", {}, blocking=False)
-        except Exception as reload_err:
-            _LOGGER.debug("DomoLink-Mistral: Erreur rechargement post-fix: %s", reload_err)
-
     success = applied > 0 and skipped == 0
     _LOGGER.info("DomoLink-Mistral: Réparation terminée — %s appliqué(s), %s ignoré(s).", applied, skipped)
     return {"success": success, "applied": applied, "skipped": skipped, "details": details}
-
-
-async def append_automation_to_yaml(hass: HomeAssistant, automation_yaml: str) -> dict:
-    """Ajoute une nouvelle automation générée par Mistral dans automations.yaml."""
-    def _do_append():
-        config_dir = hass.config.config_dir
-        target_path = os.path.join(config_dir, "automations.yaml")
-        if not os.path.exists(target_path):
-            alt_path = os.path.join(config_dir, "automation.yaml")
-            if os.path.exists(alt_path):
-                target_path = alt_path
-
-        # 1. Backup préalable
-        if os.path.exists(target_path):
-            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-            backup_path = f"{target_path}.{ts}.bak"
-            try:
-                shutil.copy2(target_path, backup_path)
-                _LOGGER.info("DomoLink-Mistral: Backup automations créé -> %s", backup_path)
-            except Exception as e:
-                return {"success": False, "message": f"Échec sauvegarde automations.yaml: {e}"}
-
-        # 2. Nettoyage du YAML fourni
-        cleaned = automation_yaml.strip()
-        if cleaned.startswith("```yaml"):
-            cleaned = cleaned[7:]
-        elif cleaned.startswith("```"):
-            cleaned = cleaned[3:]
-        if cleaned.endswith("```"):
-            cleaned = cleaned[:-3]
-        cleaned = cleaned.strip()
-
-        # S'assurer que l'automation possède un identifiant 'id' unique pour l'éditeur UI
-        import re
-        import uuid
-        import tempfile
-
-        if not re.search(r"^\s*id\s*:", cleaned, re.MULTILINE):
-            auto_id = f"mistral_{uuid.uuid4().hex[:12]}"
-            if cleaned.startswith("-"):
-                cleaned = f"- id: '{auto_id}'\n  " + cleaned[1:].lstrip()
-            else:
-                cleaned = f"id: '{auto_id}'\n" + cleaned
-
-        # S'assurer que le bloc commence par un tiret si c'est une liste
-        lines = cleaned.splitlines()
-        if lines and not lines[0].strip().startswith("-"):
-            # Ajouter le tiret au premier élément et indenter le reste
-            formatted_lines = [f"- {lines[0]}"]
-            for l in lines[1:]:
-                formatted_lines.append(f"  {l}")
-            cleaned = "\n".join(formatted_lines)
-
-        # 3. Lecture du fichier existant
-        existing = ""
-        if os.path.exists(target_path):
-            with open(target_path, "r", encoding="utf-8") as f:
-                existing = f.read().strip()
-                # Si le fichier ne contient que '[]', le vider pour permettre une liste YAML propre
-                if existing == "[]":
-                    existing = ""
-
-        combined = (existing + "\n\n" + cleaned + "\n") if existing else (cleaned + "\n")
-
-        # 4. Validation syntaxique
-        try:
-            import yaml
-            class _SafeLoader(yaml.SafeLoader):
-                pass
-            def _dummy(loader, tag, node):
-                return None
-            _SafeLoader.add_multi_constructor("!", _dummy)
-            yaml.load(combined, Loader=_SafeLoader)
-        except Exception as yaml_err:
-            _LOGGER.error("DomoLink-Mistral: Erreur syntaxe automation générée: %s", yaml_err)
-            return {"success": False, "message": f"YAML invalide : {yaml_err}"}
-
-        # 5. Écriture atomique sécurisée via fichier temporaire
-        orig_mode = None
-        if os.path.exists(target_path):
-            try:
-                orig_mode = os.stat(target_path).st_mode & 0o777
-            except Exception:
-                orig_mode = None
-
-        dir_name = os.path.dirname(target_path)
-        with tempfile.NamedTemporaryFile("w", dir=dir_name, delete=False, encoding="utf-8") as tf:
-            tf.write(combined)
-            temp_path = tf.name
-
-        if orig_mode is not None:
-            try:
-                os.chmod(temp_path, orig_mode)
-            except Exception:
-                pass
-
-        os.replace(temp_path, target_path)
-
-        _LOGGER.info("DomoLink-Mistral: Nouvelle automation ajoutée à %s", target_path)
-        return {"success": True, "file": os.path.basename(target_path)}
-
-    res = await hass.async_add_executor_job(_do_append)
-    if res.get("success"):
-        # Recharger les automations de manière protégée
-        if hass.services.has_service("automation", "reload"):
-            try:
-                await hass.services.async_call("automation", "reload", {}, blocking=True)
-                res["message"] = "Automation injectée et rechargée avec succès dans Home Assistant !"
-            except Exception as reload_err:
-                _LOGGER.warning("DomoLink-Mistral: Automation écrite mais échec du rechargement à chaud: %s", reload_err)
-                res["message"] = f"Automation enregistrée, mais le rechargement a échoué ({reload_err}). Vérifiez la syntaxe globale."
-        else:
-            res["message"] = "Automation enregistrée dans automations.yaml."
-
-    return res
-

@@ -1,20 +1,13 @@
 /**
- * DomoLink-Mistral IA — Panneau Frontend Ultime pour Home Assistant
+ * DomoLink-Mistral IA — Panneau Frontend pour Home Assistant
  *
  * 6 Onglets intégrés :
  * 1. 🛡️ Diagnostic & Audit (Logs, YAML, !includes, ESPHome, Blueprints, Entités)
- * 2. 🔧 Réparation Sécurisée (Actions 1-clic, Diff visuel avant/après, All Auto, Ignorés)
- * 3. ✨ Générateur IA (Création d'automations en langage naturel avec vraies entités)
+ * 2. 🔧 Réparation Sécurisée (Actions de services HA, Ignorés, Guide manuel)
+ * 3. ✨ Générateur IA (Création d'automations en langage naturel via l'API Home Assistant)
  * 4. 🎙️ Assist Vocal & Écrit (Chat interactif avec tool-calling pour piloter la maison)
  * 5. 👁️ Vision & Surveillance (Analyse de caméras via Mistral Pixtral : colis, personnes, anomalies)
  * 6. 📰 Smart Briefing (Synthèse matinale/soirée avec lecture vocale TTS et résumé)
- *
- * Système de Mise à Jour Automatique 1-Clic :
- * - Détection des releases GitHub
- * - Pastille MAJ dans le menu latéral Home Assistant
- * - Bouton d'action dans le bandeau supérieur
- * - Bannière de notification et modale de Changelog
- * - Déploiement sécurisé avec sauvegarde et redémarrage automatique
  */
 
 class DomolinkMistralPanel extends HTMLElement {
@@ -44,15 +37,6 @@ class DomolinkMistralPanel extends HTMLElement {
     this._lastWsFetch = 0;
     this._wsFetchInProgress = false;
     this._renderPending = false;
-
-    // Système de mise à jour
-    this._updateInfo = null;
-    this._showUpdateModal = false;
-    this._isUpdatingComponent = false;
-    this._updateStepText = "";
-    this._updateProgress = 0;
-    this._rebootCountdown = 0;
-    this._sidebarInterval = null;
 
     // Onglet Générateur
     this._genPrompt = "";
@@ -90,29 +74,6 @@ class DomolinkMistralPanel extends HTMLElement {
 
   connectedCallback() {
     this._render();
-
-    // Vérification initiale des mises à jour
-    setTimeout(() => {
-      this._checkUpdate();
-    }, 1000);
-
-    // Injection périodique et observateur de mutations dans la barre latérale HA
-    this._sidebarInterval = setInterval(() => {
-      this._injectSidebarBadge();
-    }, 2500);
-
-    try {
-      const ha = document.querySelector("home-assistant");
-      const main = ha && ha.shadowRoot && ha.shadowRoot.querySelector("home-assistant-main");
-      const sidebar = main && main.shadowRoot && main.shadowRoot.querySelector("ha-sidebar");
-      if (sidebar && sidebar.shadowRoot && !this._sidebarObserver) {
-        this._sidebarObserver = new MutationObserver(() => {
-          this._injectSidebarBadge();
-        });
-        this._sidebarObserver.observe(sidebar.shadowRoot, { childList: true, subtree: true });
-      }
-    } catch (e) {}
-
   }
 
   async _subscribeEvents() {
@@ -124,23 +85,14 @@ class DomolinkMistralPanel extends HTMLElement {
       return;
     }
     try {
-      const unsub1 = await this._hass.connection.subscribeEvents((event) => {
-        if (event && event.data) {
-          this._updateInfo = event.data;
-          this._render();
-          this._injectSidebarBadge();
-        }
-      }, "domolink_mistral_update_event");
-      this._unsubs.push(unsub1);
-
-      const unsub2 = await this._hass.connection.subscribeEvents((event) => {
+      const unsub = await this._hass.connection.subscribeEvents((event) => {
         if (event && event.data && event.data.error) {
           this._lastError = event.data.error;
           this._isAnalyzing = false;
           this._render();
         }
       }, "domolink_mistral_analysis_error");
-      this._unsubs.push(unsub2);
+      this._unsubs.push(unsub);
     } catch (e) {
       console.warn("DomoLink-Mistral: Erreur abonnement événements HA bus", e);
     }
@@ -158,13 +110,6 @@ class DomolinkMistralPanel extends HTMLElement {
   }
 
   disconnectedCallback() {
-    if (this._sidebarInterval) {
-      clearInterval(this._sidebarInterval);
-    }
-    if (this._sidebarObserver) {
-      this._sidebarObserver.disconnect();
-      this._sidebarObserver = null;
-    }
     if (this._onModalMove) {
       document.removeEventListener("mousemove", this._onModalMove);
       this._onModalMove = null;
@@ -215,243 +160,21 @@ class DomolinkMistralPanel extends HTMLElement {
     }
     try {
       const changed = this._updateFromSensor();
-      this._checkUpdateFromEntities();
 
       if (!this._initialized || changed) {
         this._initialized = true;
         this._scheduleRender();
-        this._injectSidebarBadge();
       }
     } catch (err) {
       console.error("DomoLink-Mistral IA set hass error:", err);
     }
   }
 
-  _cleanVersion(v, fallback = "") {
-    const s = String(v || fallback).trim().replace(/^[vV]+/, "");
-    return s || fallback;
-  }
-
-  _semverTuple(v) {
-    const parts = String(v || "").replace(/^[vV]+/, "").split(".").map((x) => parseInt(x, 10) || 0);
-    while (parts.length < 3) parts.push(0);
-    return parts.slice(0, 3);
-  }
-
-  _isNewer(a, b) {
-    const x = this._semverTuple(a);
-    const y = this._semverTuple(b);
-    for (let i = 0; i < 3; i++) {
-      if (x[i] !== y[i]) return x[i] > y[i];
-    }
-    return false;
-  }
-
-  _checkUpdateFromEntities() {
-    if (!this._hass || !this._hass.states) return;
-    // Plusieurs entités update peuvent coexister (native + HACS) : on les agrège toutes.
-    // L'entité native peut être bloquée par la limite d'API GitHub alors que HACS connaît
-    // la dernière version : on retient donc la PLUS RÉCENTE version vue et l'état « on » de n'importe laquelle.
-    const ids = Object.keys(this._hass.states).filter(
-      (id) => id.startsWith("update.") && id.includes("mistral")
+  _getServiceActions(issue) {
+    if (!issue || !Array.isArray(issue.auto_fix_script)) return [];
+    return issue.auto_fix_script.filter(
+      (a) => a && typeof a === "object" && a.domain && a.service
     );
-    if (!ids.length) return;
-
-    const sourceEntityId = ids.find((id) => this._hass.states[id]?.attributes?.installed_version) || ids[0];
-    const sourceAttrs = this._hass.states[sourceEntityId]?.attributes || {};
-    const installed = this._cleanVersion(sourceAttrs.installed_version);
-
-    let latest = installed;
-    let hasUpdate = false;
-    let source = this._hass.states[sourceEntityId];
-    for (const id of ids) {
-      const st = this._hass.states[id];
-      const at = st.attributes || {};
-      const lv = this._cleanVersion(at.latest_version);
-      if (lv && this._isNewer(lv, latest)) {
-        latest = lv;
-        source = st;
-      }
-      if (st.state === "on") hasUpdate = true;
-    }
-    if (this._isNewer(latest, installed)) hasUpdate = true;
-    if (this._updateInfo && this._updateInfo.latest_version && this._isNewer(this._updateInfo.latest_version, latest)) {
-      latest = this._cleanVersion(this._updateInfo.latest_version);
-      hasUpdate = this._isNewer(latest, installed);
-    }
-    if (!hasUpdate) latest = installed;
-
-    const attrs = source.attributes || {};
-    if (
-      !this._updateInfo ||
-      this._updateInfo.has_update !== hasUpdate ||
-      this._updateInfo.current_version !== installed ||
-      this._updateInfo.latest_version !== latest
-    ) {
-      this._updateInfo = {
-        has_update: hasUpdate,
-        current_version: installed,
-        latest_version: latest,
-        release_tag: `v${latest}`,
-        release_url: attrs.release_url || nativeAttrs.release_url || "https://github.com/SocrateMobile/DomoLink-Mistral/releases",
-        changelog: attrs.release_summary || nativeAttrs.release_summary || "Notes de version disponibles sur GitHub.",
-        is_updating: nativeAttrs.in_progress || false,
-      };
-      this._injectSidebarBadge();
-    }
-  }
-
-  async _checkUpdate() {
-    if (!this._hass) return;
-    try {
-      const data = await this._callServiceWithResponse("domolink_mistral", "check_update", {});
-      if (data && data.has_update !== undefined) {
-        this._updateInfo = data;
-        this._render();
-        this._injectSidebarBadge();
-      }
-    } catch (e) {
-      console.debug("DomoLink-Mistral IA: Check update skipped:", e);
-    }
-  }
-
-  async _startAutoUpdate() {
-    this._isUpdatingComponent = true;
-    this._updateProgress = 15;
-    this._updateStepText = "📦 [1/4] Téléchargement de la release GitHub...";
-    this._render();
-
-    try {
-      setTimeout(() => {
-        if (this._isUpdatingComponent) {
-          this._updateProgress = 45;
-          this._updateStepText = "🛡️ [2/4] Création de la sauvegarde locale du composant...";
-          this._render();
-        }
-      }, 1500);
-
-      setTimeout(() => {
-        if (this._isUpdatingComponent) {
-          this._updateProgress = 75;
-          this._updateStepText = "⚡ [3/4] Déploiement des nouveaux fichiers...";
-          this._render();
-        }
-      }, 3000);
-
-      try {
-        const ids = Object.keys(this._hass?.states || {}).filter((id) => id.startsWith("update.") && id.includes("mistral"));
-        const updateEntityId = ids.find((id) => this._hass.states[id]?.state === "on") || "update.domolink_mistral_update";
-        await this._hass.callService("update", "install", {
-          entity_id: updateEntityId,
-        });
-      } catch (err) {
-        console.warn("Update service error:", err);
-      }
-
-      this._updateProgress = 100;
-      this._updateStepText = "🔄 [4/4] Redémarrage de Home Assistant...";
-      this._render();
-
-      this._startRebootSequence();
-
-    } catch (e) {
-      this._isUpdatingComponent = false;
-      this._updateStepText = `❌ Échec : ${e.message || e}`;
-      this._render();
-    }
-  }
-
-  _startRebootSequence() {
-    this._rebootCountdown = 30;
-    const interval = setInterval(() => {
-      this._rebootCountdown--;
-      this._render();
-
-      if (this._rebootCountdown <= 20) {
-        fetch("/api/states", { method: "HEAD", cache: "no-store" })
-          .then((r) => {
-            if (r.ok || r.status === 401 || r.status === 200) {
-              clearInterval(interval);
-              window.location.reload();
-            }
-          })
-          .catch(() => {});
-      }
-
-      if (this._rebootCountdown <= 0) {
-        clearInterval(interval);
-        window.location.reload();
-      }
-    }, 1000);
-  }
-
-  _injectSidebarBadge() {
-    try {
-      const hasUpdate = Boolean(this._updateInfo && this._updateInfo.has_update);
-      const ha = document.querySelector("home-assistant");
-      const main = ha && ha.shadowRoot && ha.shadowRoot.querySelector("home-assistant-main");
-      const sidebar = main && main.shadowRoot && main.shadowRoot.querySelector("ha-sidebar");
-      if (!sidebar || !sidebar.shadowRoot) return;
-
-      const integrations = [
-        {
-          key: "domolink_mistral",
-          patterns: ["domolink_mistral", "domolink-mistral"],
-          entityIds: [
-            "update.domolink_mistral_ia_mise_a_jour",
-            "update.domolink_mistral_update",
-          ],
-          hasUpdate: hasUpdate,
-        },
-      ];
-
-      const container = sidebar.shadowRoot.querySelector("paper-listbox, ha-md-list, nav, div.menu, div.items");
-      const items = (container || sidebar.shadowRoot).querySelectorAll("paper-icon-item, ha-md-list-item, ha-sidebar-item, a");
-
-      integrations.forEach((integ) => {
-        let isUpdateAvail = integ.hasUpdate;
-        if (isUpdateAvail === undefined && this._hass && this._hass.states) {
-          isUpdateAvail = integ.entityIds.some((id) => {
-            const st = this._hass.states[id];
-            return st && (st.state === "on" || (st.attributes && st.attributes.update_available === true));
-          });
-        }
-
-        for (const item of items) {
-          const href = item.getAttribute("href") || (item.dataset && (item.dataset.panel || item.dataset.href)) || "";
-          const id = item.id || "";
-          const ariaLabel = item.getAttribute("aria-label") || "";
-          const text = (item.textContent || "").toLowerCase();
-
-          const isMatch = integ.patterns.some((pat) => {
-            const p = pat.toLowerCase();
-            return href.toLowerCase().includes(p) ||
-                   id.toLowerCase().includes(p) ||
-                   ariaLabel.toLowerCase().includes(p.replace(/_/g, " ")) ||
-                   (p === "flipr" && text.includes("flipr"));
-          });
-
-          if (isMatch) {
-            let badge = item.querySelector(".domolink-sidebar-badge");
-            if (isUpdateAvail) {
-              if (!badge) {
-                badge = document.createElement("span");
-                badge.className = "badge domolink-sidebar-badge";
-                badge.setAttribute("slot", "end");
-                badge.style.cssText = "background: linear-gradient(135deg, #ef4444, #f59e0b); color: white; border-radius: 9999px; padding: 2px 7px; font-size: 10px; font-weight: 800; box-shadow: 0 2px 6px rgba(239,68,68,0.4); margin-left: auto; letter-spacing: 0.5px; z-index: 10; display: inline-block;";
-                badge.textContent = "MAJ";
-                badge.title = "Mise à jour disponible !";
-                item.appendChild(badge);
-              }
-            } else if (badge) {
-              badge.remove();
-            }
-          }
-        }
-      });
-    } catch (e) {
-      // Ignorer les erreurs de traversée DOM
-    }
   }
 
   _updateFromSensor() {
@@ -629,50 +352,6 @@ class DomolinkMistralPanel extends HTMLElement {
         .header h1 { margin: 0; font-size: 1.5em; }
         .header-info { font-size: 0.85em; color: var(--secondary-text-color, #757575); }
 
-        /* ── Bouton Animation MAJ ── */
-        .btn-update-pulse {
-          background: linear-gradient(135deg, #ff416c, #ff4b2b);
-          color: white;
-          border: none;
-          padding: 10px 18px;
-          border-radius: 8px;
-          font-weight: 700;
-          font-size: 0.9em;
-          cursor: pointer;
-          display: inline-flex;
-          align-items: center;
-          gap: 8px;
-          box-shadow: 0 4px 15px rgba(255, 65, 108, 0.4);
-          animation: btn-pulse 2s infinite;
-          transition: transform 0.2s, box-shadow 0.2s;
-        }
-        .btn-update-pulse:hover {
-          transform: translateY(-2px);
-          box-shadow: 0 6px 20px rgba(255, 65, 108, 0.6);
-        }
-
-        @keyframes btn-pulse {
-          0% { box-shadow: 0 0 0 0 rgba(255, 65, 108, 0.7); }
-          70% { box-shadow: 0 0 0 12px rgba(255, 65, 108, 0); }
-          100% { box-shadow: 0 0 0 0 rgba(255, 65, 108, 0); }
-        }
-
-        /* ── Bannière de Mise à Jour ── */
-        .update-banner {
-          background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
-          color: white;
-          padding: 16px 20px;
-          border-radius: 12px;
-          margin-bottom: 20px;
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          flex-wrap: wrap;
-          gap: 14px;
-          box-shadow: 0 6px 18px rgba(30, 60, 114, 0.25);
-          border-left: 6px solid #ff4b2b;
-        }
-
         /* ── Navigation 6 Onglets ── */
         .tabs-nav {
           display: flex; gap: 6px; margin-bottom: 24px;
@@ -778,20 +457,6 @@ class DomolinkMistralPanel extends HTMLElement {
           overflow: hidden;
         }
 
-        /* Barre de progression */
-        .progress-bar-bg {
-          background: #e0e0e0;
-          border-radius: 8px;
-          height: 12px;
-          overflow: hidden;
-          margin: 16px 0;
-        }
-        .progress-bar-fill {
-          background: linear-gradient(90deg, #4caf50, #8bc34a);
-          height: 100%;
-          transition: width 0.4s ease;
-        }
-
         .loading-overlay {
           display: flex; flex-direction: column; align-items: center; justify-content: center;
           padding: 60px 20px; text-align: center;
@@ -815,7 +480,6 @@ class DomolinkMistralPanel extends HTMLElement {
       </style>
 
       ${this._renderHeader()}
-      ${this._renderUpdateBanner()}
       ${this._renderErrorBanner()}
       ${this._renderTabs()}
 
@@ -823,7 +487,6 @@ class DomolinkMistralPanel extends HTMLElement {
 
       ${this._renderModal()}
       ${this._renderConfirmDialog()}
-      ${this._renderUpdateModal()}
     `;
 
     this._attachEvents();
@@ -851,7 +514,7 @@ class DomolinkMistralPanel extends HTMLElement {
       errorTitle = "Limite de requêtes Mistral AI atteinte (HTTP 429 : Too Many Requests)";
     } else if (isBackupOrSystem) {
       errorTitle = "Avertissement Système / Sauvegarde Home Assistant";
-      helpTip = "💡 La modification est protégée par la copie locale .bak. Vérifiez vos permissions et l'état du service de sauvegarde de Home Assistant.";
+      helpTip = "💡 Vérifiez vos permissions et l'état du service de sauvegarde de Home Assistant.";
     }
 
     return `
@@ -890,68 +553,23 @@ class DomolinkMistralPanel extends HTMLElement {
   }
 
   _renderHeader() {
-    const hasUpdate = this._updateInfo && this._updateInfo.has_update;
     return `
       <div class="header">
         <div style="display: flex; align-items: center; gap: 12px;">
           ${this.narrow ? `
             <ha-menu-button id="ha-menu-btn"></ha-menu-button>
           ` : ""}
-          <img src="/domolink_mistral_frontend/icon.png" alt="Logo" style="width: 38px; height: 38px; border-radius: 8px;" />
+          <img src="/api/brands/integration/domolink_mistral/icon.png" alt="Logo" style="width: 38px; height: 38px; border-radius: 8px;" onerror="this.style.display='none'" />
           <div>
             <h1 id="mistral-title" style="margin: 0; font-size: 1.4em; line-height: 1.2; cursor: pointer;">
               DomoLink-Mistral IA
-              <span style="font-size: 0.6em; color: var(--secondary-text-color, #757575); font-weight: normal; margin-left: 8px; vertical-align: middle;">
-                v${this._cleanVersion(this._updateInfo?.current_version)}
-              </span>
-              ${hasUpdate ? `
-                <span class="badge" id="btn-badge-update-click" title="Nouvelle version disponible ! Cliquez pour mettre à jour" style="background: linear-gradient(135deg, #ef4444, #f59e0b); color: white; font-size: 0.5em; padding: 2px 8px; border-radius: 9999px; margin-left: 8px; vertical-align: middle; cursor: pointer; box-shadow: 0 2px 6px rgba(239,68,68,0.4); animation: pulse 2s infinite;">
-                  🚀 MAJ v${this._cleanVersion(this._updateInfo.latest_version)} disponible
-                </span>
-              ` : `
-                <span class="badge" id="btn-badge-status-click" title="Composant à jour (cliquer pour revérifier)" style="background: rgba(16, 185, 129, 0.15); color: #10b981; border: 1px solid rgba(16, 185, 129, 0.3); font-size: 0.5em; padding: 2px 8px; border-radius: 9999px; margin-left: 8px; vertical-align: middle; cursor: pointer;">
-                  ✓ À jour
-                </span>
-              `}
             </h1>
             <div class="header-info">Dernière analyse : ${this._timeAgo(this._lastAnalysis)}</div>
           </div>
         </div>
         <div style="display: flex; align-items: center; gap: 10px;">
-          ${hasUpdate ? `
-            <button class="btn-update-pulse" id="btn-header-update">
-              🚀 Mise à jour v${this._cleanVersion(this._updateInfo.latest_version)}
-            </button>
-          ` : ""}
           <button class="btn btn-primary" id="btn-quick-scan" ${this._isAnalyzing ? "disabled" : ""}>
             ${this._isAnalyzing ? '<span class="spinner"></span>Audit en cours...' : "🔍 Lancer l'Audit"}
-          </button>
-        </div>
-      </div>
-    `;
-  }
-
-  _renderUpdateBanner() {
-    if (!this._updateInfo || !this._updateInfo.has_update) return "";
-    return `
-      <div class="update-banner">
-        <div style="display: flex; align-items: center; gap: 14px;">
-          <span style="font-size: 2em;">🚀</span>
-          <div>
-            <div style="font-weight: 700; font-size: 1.1em; color: #ffeb3b;">
-              Nouvelle version disponible : v${this._cleanVersion(this._updateInfo.latest_version)}
-            </div>
-            <div style="font-size: 0.85em; opacity: 0.95;">
-              Version actuelle : v${this._cleanVersion(this._updateInfo.current_version)} &bull; Sauvegarde préalable automatique et déploiement 1-clic.
-            </div>
-          </div>
-        </div>
-        <div style="display: flex; gap: 8px;">
-          <button class="btn btn-secondary" id="btn-banner-changelog" style="background: rgba(255,255,255,0.2);">
-            📋 Changelog
-          </button>
-          <button class="btn btn-warning" id="btn-banner-update" style="background: #ff4b2b; color: white; font-weight: bold;">
-            ⚡ Mettre à jour en 1-Clic
           </button>
         </div>
       </div>
@@ -1058,9 +676,6 @@ class DomolinkMistralPanel extends HTMLElement {
             <button class="btn btn-secondary" id="btn-tab-repair-goto">
               🔧 Accéder aux ${this._issues.length} Réparation(s)
             </button>
-            <button class="btn btn-secondary" id="btn-check-update-manual" style="margin-left: auto;">
-              🔄 Vérifier les Mises à Jour
-            </button>
           </div>
         </div>
       </div>
@@ -1073,7 +688,7 @@ class DomolinkMistralPanel extends HTMLElement {
       filtered = filtered.filter(i => i.severity === this._repairFilter);
     }
 
-    const autoFixCount = this._issues.filter(i => i.auto_fix_script && i.auto_fix_script.length > 0).length;
+    const autoFixCount = this._issues.filter(i => this._getServiceActions(i).length > 0).length;
 
     return `
       <div>
@@ -1093,18 +708,11 @@ class DomolinkMistralPanel extends HTMLElement {
             </button>
           </div>
 
-
-
           <div style="display: flex; gap: 8px;">
             <button class="btn btn-warning" id="btn-repair-all" ${autoFixCount === 0 || this._isApplying ? "disabled" : ""}>
               ⚡ Corriger Tout (All Auto: ${autoFixCount})
             </button>
-            <button class="btn btn-danger" id="btn-rollback" title="Annuler la dernière modification YAML">
-              ⏪ Rollback
-            </button>
-
             <button class="btn btn-secondary" id="btn-toggle-ignored">
-
               ${this._showIgnored ? "Masquer les ignorés" : `Afficher les ignorés (${this._ignoredIssues.length})`}
             </button>
           </div>
@@ -1147,9 +755,9 @@ class DomolinkMistralPanel extends HTMLElement {
   }
 
   _renderIssueCard(issue) {
-    const hasAuto = issue.auto_fix_script && issue.auto_fix_script.length > 0;
+    const hasAuto = this._getServiceActions(issue).length > 0;
     const borderColor = this._severityColor(issue.severity);
-    const filePath = issue.file || (issue.auto_fix_script && issue.auto_fix_script[0] && issue.auto_fix_script[0].file) || "";
+    const filePath = issue.file || "";
 
     return `
       <div class="issue-card" style="border-left-color: ${borderColor};">
@@ -1211,7 +819,7 @@ class DomolinkMistralPanel extends HTMLElement {
             <p>${this._escapeHtml(this._generatedAutomation.description || "")}</p>
             <div class="code-block">${this._escapeHtml(this._generatedAutomation.yaml || "")}</div>
             <button class="btn btn-success" id="btn-save-generated-auto">
-              💾 Injecter dans automations.yaml
+              💾 Créer l'automation dans Home Assistant
             </button>
           </div>
         ` : ""}
@@ -1321,75 +929,10 @@ class DomolinkMistralPanel extends HTMLElement {
     `;
   }
 
-  _renderUpdateModal() {
-    if (!this._showUpdateModal || !this._updateInfo) return "";
-
-    return `
-      <div class="modal-overlay">
-        <div class="modal" style="max-width: 600px;">
-          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
-            <h2 style="margin: 0; display: flex; align-items: center; gap: 8px;">
-              🚀 Mise à jour DomoLink-Mistral IA
-            </h2>
-            ${!this._isUpdatingComponent ? `
-              <button id="btn-close-update-modal" style="background: none; border: none; font-size: 1.4em; cursor: pointer;">&times;</button>
-            ` : ""}
-          </div>
-
-          <div style="background: rgba(3,169,244,0.08); padding: 12px 16px; border-radius: 8px; margin-bottom: 16px; display: flex; justify-content: space-between; align-items: center;">
-            <div>
-              <strong>Version installée :</strong> v${this._cleanVersion(this._escapeHtml(this._updateInfo.current_version))}
-            </div>
-            <div style="font-size: 1.2em;">➔</div>
-            <div>
-              <strong>Nouvelle version :</strong> <span style="color: #ff416c; font-weight: bold;">v${this._cleanVersion(this._escapeHtml(this._updateInfo.latest_version || this._updateInfo.release_tag))}</span>
-            </div>
-          </div>
-
-          ${this._isUpdatingComponent ? `
-            <div style="text-align: center; padding: 20px 0;">
-              <div class="big-spinner" style="margin: 0 auto 16px auto;"></div>
-              <h3 style="margin: 0 0 8px 0;">Mise à jour en cours...</h3>
-              <p style="color: var(--primary-color, #03a9f4); font-weight: 600;">
-                ${this._escapeHtml(this._updateStepText)}
-              </p>
-
-              <div class="progress-bar-bg">
-                <div class="progress-bar-fill" style="width: ${this._updateProgress}%;"></div>
-              </div>
-
-              ${this._rebootCountdown > 0 ? `
-                <div style="margin-top: 14px; font-size: 0.9em; color: var(--secondary-text-color);">
-                  Reconnexion automatique dans <strong>${this._rebootCountdown}s</strong>...
-                </div>
-              ` : ""}
-            </div>
-          ` : `
-            <div>
-              <h4 style="margin: 12px 0 6px 0;">📋 Notes de version & Nouveautés :</h4>
-              <div class="code-block" style="max-height: 250px; background: #252526;">${this._escapeHtml(this._updateInfo.changelog || "Mise à jour d'optimisation et de sécurité.")}</div>
-
-              <div style="background: rgba(76,175,80,0.08); padding: 12px; border-radius: 8px; margin: 16px 0; font-size: 0.85em; color: var(--secondary-text-color);">
-                🛡️ <strong>Sécurité garantie :</strong> Une sauvegarde locale préalable de votre dossier d'intégration sera automatiquement créée avant tout remplacement de fichier.
-              </div>
-
-              <div style="display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px;">
-                <button class="btn btn-secondary" id="btn-cancel-update-modal">Annuler</button>
-                <button class="btn-update-pulse" id="btn-modal-install-update" style="padding: 10px 20px;">
-                  ⚡ Lancer la mise à jour (1-Clic)
-                </button>
-              </div>
-            </div>
-          `}
-        </div>
-      </div>
-    `;
-  }
-
   _renderModal() {
     if (!this._selectedIssue) return "";
     const issue = this._selectedIssue;
-    const filePath = issue.file || (issue.auto_fix_script && issue.auto_fix_script[0] && issue.auto_fix_script[0].file) || "";
+    const filePath = issue.file || "";
     const rawGuide = issue.manual_fix || issue.manual_guide;
     let guideText = "";
     if (Array.isArray(rawGuide)) {
@@ -1506,79 +1049,6 @@ class DomolinkMistralPanel extends HTMLElement {
       });
     }
 
-    // Header Update Button & Badges
-    const btnHeaderUpdate = root.getElementById("btn-header-update");
-    if (btnHeaderUpdate) {
-      btnHeaderUpdate.addEventListener("click", () => {
-        this._showUpdateModal = true;
-        this._render();
-      });
-    }
-    const btnBadgeUpdate = root.getElementById("btn-badge-update-click");
-    if (btnBadgeUpdate) {
-      btnBadgeUpdate.addEventListener("click", () => {
-        this._showUpdateModal = true;
-        this._render();
-      });
-    }
-    const btnBadgeStatus = root.getElementById("btn-badge-status-click");
-    if (btnBadgeStatus) {
-      btnBadgeStatus.addEventListener("click", async () => {
-        btnBadgeStatus.textContent = "⏳ Vérification...";
-        await this._checkUpdate();
-      });
-    }
-
-    // Banner Update Buttons
-    const btnBannerUpdate = root.getElementById("btn-banner-update");
-    if (btnBannerUpdate) {
-      btnBannerUpdate.addEventListener("click", () => {
-        this._showUpdateModal = true;
-        this._render();
-      });
-    }
-    const btnBannerChangelog = root.getElementById("btn-banner-changelog");
-    if (btnBannerChangelog) {
-      btnBannerChangelog.addEventListener("click", () => {
-        this._showUpdateModal = true;
-        this._render();
-      });
-    }
-
-    // Modal Update Buttons
-    const btnCloseUpdateModal = root.getElementById("btn-close-update-modal");
-    if (btnCloseUpdateModal) {
-      btnCloseUpdateModal.addEventListener("click", () => {
-        this._showUpdateModal = false;
-        this._render();
-      });
-    }
-    const btnCancelUpdateModal = root.getElementById("btn-cancel-update-modal");
-    if (btnCancelUpdateModal) {
-      btnCancelUpdateModal.addEventListener("click", () => {
-        this._showUpdateModal = false;
-        this._render();
-      });
-    }
-    const btnModalInstall = root.getElementById("btn-modal-install-update");
-    if (btnModalInstall) {
-      btnModalInstall.addEventListener("click", () => {
-        this._startAutoUpdate();
-      });
-    }
-
-    // Manual check update from Audit tab
-    const btnCheckUpdateManual = root.getElementById("btn-check-update-manual");
-    if (btnCheckUpdateManual) {
-      btnCheckUpdateManual.addEventListener("click", async () => {
-        btnCheckUpdateManual.textContent = "⏳ Recherche...";
-        await this._checkUpdate();
-        setTimeout(() => {
-          if (btnCheckUpdateManual) btnCheckUpdateManual.textContent = "🔄 Vérifier les Mises à Jour";
-        }, 1500);
-      });
-    }
-
     // Navigation Tabs
     root.querySelectorAll(".tab-btn").forEach(btn => {
       btn.addEventListener("click", (e) => {
@@ -1618,37 +1088,27 @@ class DomolinkMistralPanel extends HTMLElement {
     const btnRepairAll = root.getElementById("btn-repair-all");
     if (btnRepairAll) {
       btnRepairAll.addEventListener("click", () => {
+        const fixableIssues = this._issues.filter(
+          (i) => this._getServiceActions(i).length > 0
+        );
+        const callLines = [];
+        for (const issue of fixableIssues) {
+          const actions = this._getServiceActions(issue);
+          for (const action of actions) {
+            const svcData = action.service_data || action.data || {};
+            callLines.push(
+              `• [${issue.title || issue.id}] ${action.domain}.${action.service} — data: ${JSON.stringify(svcData)}`
+            );
+          }
+        }
         this._confirmData = {
           title: "⚡ Appliquer tous les correctifs automatiques ?",
-          message: "Une sauvegarde globale sera effectuée avant d'appliquer l'ensemble des correctifs.",
+          message: "Vérifiez la liste complète des appels de service Home Assistant qui seront exécutés :",
+          details: callLines.length > 0 ? callLines.join("\n") : "Aucun appel de service à exécuter.",
           onConfirm: () => {
             this._isApplying = true;
             this._render();
             this._hass.callService("domolink_mistral", "apply_all_fixes", {});
-          }
-        };
-        this._render();
-      });
-    }
-
-    // Rollback Latest Fix
-    const btnRollback = root.getElementById("btn-rollback");
-    if (btnRollback) {
-      btnRollback.addEventListener("click", () => {
-        this._confirmData = {
-          title: "⏪ Annuler la dernière modification YAML ?",
-          message: "Le fichier modifié lors du dernier correctif sera restauré à partir de sa copie de sauvegarde (.bak).",
-          onConfirm: () => {
-            this._isApplying = true;
-            this._render();
-            this._hass.callService("domolink_mistral", "rollback_latest_fix", {}).then(() => {
-              this._isApplying = false;
-              this._render();
-            }).catch((err) => {
-              this._isApplying = false;
-              this._lastError = err?.message || "Erreur lors du rollback";
-              this._render();
-            });
           }
         };
         this._render();
@@ -1671,18 +1131,19 @@ class DomolinkMistralPanel extends HTMLElement {
         const issue = this._issues.find(i => i.id === id);
         if (!issue) return;
 
-        const fileStr = issue.file ? `Fichier : ${issue.file}\n` : "";
-        const lineStr = issue.line ? `Ligne : ${issue.line}\n` : "";
-        const scriptStr = issue.auto_fix_script ? `Action : ${JSON.stringify(issue.auto_fix_script, null, 2)}` : "";
+        const actions = this._getServiceActions(issue);
+        const callLines = actions.map(
+          (action) => `• ${action.domain}.${action.service} — data: ${JSON.stringify(action.service_data || action.data || {})}`
+        );
         this._confirmData = {
           title: `⚡ Corriger "${issue.title}" ?`,
-          message: "Vérifiez les modifications avant application. Une sauvegarde sera effectuée :",
-          details: `${fileStr}${lineStr}${scriptStr}`,
+          message: "Vérifiez les appels de service qui seront exécutés :",
+          details: callLines.join("\n"),
           onConfirm: () => {
             this._isApplying = true;
             this._render();
             this._hass.callService("domolink_mistral", "apply_fix", {
-              fix_script: issue.auto_fix_script,
+              fix_script: actions,
               issue_id: issue.id
             });
           }
@@ -1744,11 +1205,34 @@ class DomolinkMistralPanel extends HTMLElement {
     const btnSaveGen = root.getElementById("btn-save-generated-auto");
     if (btnSaveGen && this._generatedAutomation) {
       btnSaveGen.addEventListener("click", async () => {
-        await this._hass.callService("domolink_mistral", "save_automation", {
-          yaml: this._generatedAutomation.yaml
-        });
-        btnSaveGen.textContent = "✅ Enregistré dans automations.yaml !";
-        setTimeout(() => { if (btnSaveGen) btnSaveGen.textContent = "💾 Injecter dans automations.yaml"; }, 2500);
+        try {
+          const autoId = `mistral_${Date.now()}`;
+          const baseConfig =
+            this._generatedAutomation.config && typeof this._generatedAutomation.config === "object"
+              ? this._generatedAutomation.config
+              : {
+                  alias: this._generatedAutomation.title || "Nouvelle automation Mistral",
+                  description: this._generatedAutomation.description || "",
+                  trigger: [],
+                  condition: [],
+                  action: [],
+                  mode: "single",
+                };
+          const configId = baseConfig.id || autoId;
+          const configObj = { ...baseConfig, id: configId };
+          await this._hass.callApi(
+            "POST",
+            `config/automation/config/${encodeURIComponent(configId)}`,
+            configObj
+          );
+          btnSaveGen.textContent = "✅ Automation créée dans Home Assistant !";
+          setTimeout(() => {
+            if (btnSaveGen) btnSaveGen.textContent = "💾 Créer l'automation dans Home Assistant";
+          }, 2500);
+        } catch (err) {
+          this._lastError = err?.message || "Erreur lors de la création de l'automation via l'API Home Assistant.";
+          this._render();
+        }
       });
     }
 
