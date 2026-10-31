@@ -1,7 +1,7 @@
 # 🧠 DomoLink-Mistral IA pour Home Assistant
 
 [![HACS](https://img.shields.io/badge/HACS-Default-blue.svg)](https://github.com/SocrateMobile/DomoLink-Mistral)
-[![Version](https://img.shields.io/badge/version-3.0.0-green.svg)](https://github.com/SocrateMobile/DomoLink-Mistral/releases)
+[![Version](https://img.shields.io/badge/version-3.0.1-green.svg)](https://github.com/SocrateMobile/DomoLink-Mistral/releases)
 [![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-Socrate-FFDD00?logo=buy-me-a-coffee&logoColor=000000)](https://buymeacoffee.com/Socrate)
 
 [![Buy Me A Coffee](https://img.buymeacoffee.com/button-api/?text=Buy+me+a+coffee&emoji=☕&slug=Socrate&button_colour=FFDD00&font_colour=000000&font_family=Poppins&outline_colour=000000&coffee_colour=ffffff)](https://www.buymeacoffee.com/Socrate)
@@ -9,6 +9,20 @@
 DomoLink-Mistral IA est une intégration puissante pour Home Assistant qui connecte votre maison intelligente à l'intelligence artificielle **Mistral AI**. Elle agit comme un **assistant de diagnostic, d'automatisation et d'optimisation** pour votre installation domotique.
 
 L'intégration analyse intelligemment vos journaux d'erreurs (`system_log` et `homeassistant.log`), détecte les anomalies, et vous propose des solutions précises pas-à-pas pour les résoudre. Elle peut également exécuter certaines corrections de services automatiquement après confirmation.
+
+---
+
+## 🚀 Nouveautés de la Version 3.0.1
+
+- **Compatibilité Home Assistant Core 2024.10+ & 2025+** :
+  - Définition explicite de `extra=vol.ALLOW_EXTRA` sur l'ensemble des schémas de services d'administration (`async_register_admin_service`), résolvant tout rejet de paramètres inattendus (`not a valid option at ...`).
+  - Schématisation permissive pour `apply_all_fixes` et `analyze_now`.
+- **Diagnostic Enrichi & Parsing d'Erreurs Mistral AI** :
+  - Extraction automatique des messages d'erreur détaillés (y compris les validations de requêtes FastAPI / Pydantic et `detail`) lors d'éventuels codes HTTP 400 ou 429, facilitant le diagnostic immédiat.
+- **Suite de Tests Non-Régression** :
+  - Intégration de tests unitaires automatisés (`tests/test_architecture.py`).
+
+---
 
 ## ✨ Fonctionnalités
 
