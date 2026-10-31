@@ -482,6 +482,34 @@ Voici le rapport technique complet de l'instance Home Assistant :
 ```"""
 
 
+def _extract_mistral_error_message(err_data, fallback: str = "") -> str:
+    """Extrait le message d'erreur le plus pertinent et détaillé retourné par Mistral AI."""
+    if not isinstance(err_data, dict):
+        return str(fallback or "")
+    if err_data.get("message"):
+        return str(err_data["message"])
+    if err_data.get("detail"):
+        detail = err_data["detail"]
+        if isinstance(detail, str):
+            return detail
+        if isinstance(detail, list):
+            msgs = []
+            for d in detail:
+                if isinstance(d, dict) and "msg" in d:
+                    loc = " -> ".join(str(x) for x in d.get("loc", []))
+                    msgs.append(f"{loc}: {d['msg']}" if loc else d["msg"])
+                else:
+                    msgs.append(str(d))
+            return "; ".join(msgs)
+        return str(detail)
+    if err_data.get("error"):
+        err = err_data["error"]
+        if isinstance(err, dict):
+            return err.get("message") or str(err)
+        return str(err)
+    return str(fallback or "")
+
+
 def _format_mistral_http_error(status: int, message: str = "") -> dict:
     """Formate une erreur HTTP Mistral avec un diagnostic clair pour l'utilisateur."""
     if status == 400:
@@ -582,10 +610,10 @@ async def _analyze_single(
                     err_data = await response.json()
                 except Exception:
                     pass
-                raw_msg = err_data.get("message") if isinstance(err_data, dict) else ""
+                raw_msg = _extract_mistral_error_message(err_data, response.reason or "")
                 err_info = _format_mistral_http_error(
                     response.status,
-                    raw_msg or response.reason or "",
+                    raw_msg,
                 )
                 _LOGGER.error("DomoLink-Mistral: %s", err_info["log"])
                 return {
@@ -889,7 +917,7 @@ Génère l'automation correspondante au format JSON structuré."""
                     err_data = await response.json()
                 except Exception:
                     pass
-                raw_msg = err_data.get("message") if isinstance(err_data, dict) else (response.reason or "")
+                raw_msg = _extract_mistral_error_message(err_data, response.reason or "")
                 err_info = _format_mistral_http_error(response.status, raw_msg)
                 return {"success": False, "error": err_info["user_msg"], "response_text": err_info["user_msg"], "service_calls": []}
             data = await response.json()
@@ -973,7 +1001,7 @@ async def process_conversation_with_mistral(
                     err_data = await response.json()
                 except Exception:
                     pass
-                raw_msg = err_data.get("message") if isinstance(err_data, dict) else (response.reason or "")
+                raw_msg = _extract_mistral_error_message(err_data, response.reason or "")
                 err_info = _format_mistral_http_error(response.status, raw_msg)
                 return {"success": False, "response_text": err_info["user_msg"], "service_calls": []}
             data = await response.json()
@@ -1063,7 +1091,7 @@ async def analyze_image_with_pixtral(
                     err_data = await response.json()
                 except Exception:
                     pass
-                raw_msg = err_data.get("message") if isinstance(err_data, dict) else (response.reason or "")
+                raw_msg = _extract_mistral_error_message(err_data, response.reason or "")
                 err_info = _format_mistral_http_error(response.status, raw_msg)
                 return {"success": False, "error": err_info["user_msg"], "response_text": err_info["user_msg"]}
             data = await response.json()
@@ -1134,7 +1162,7 @@ Réponds UNIQUEMENT en JSON avec la structure :
                     err_data = await response.json()
                 except Exception:
                     pass
-                raw_msg = err_data.get("message") if isinstance(err_data, dict) else (response.reason or "")
+                raw_msg = _extract_mistral_error_message(err_data, response.reason or "")
                 err_info = _format_mistral_http_error(response.status, raw_msg)
                 return {"success": False, "error": err_info["user_msg"], "response_text": err_info["user_msg"]}
             data = await response.json()
