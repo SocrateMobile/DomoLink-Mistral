@@ -48,32 +48,34 @@ _LOGGER = logging.getLogger(__name__)
 PLATFORMS: list[str] = ["sensor", "button", "conversation"]
 
 # ── Schémas de validation pour les services ──
-# Sans ces schémas, HA applique un schéma vide qui rejette tous les paramètres.
+# Définition explicite de extra=vol.ALLOW_EXTRA pour la compatibilité Home Assistant Core 2024.10+ / 2025+
+
+SCHEMA_EMPTY = vol.Schema({}, extra=vol.ALLOW_EXTRA)
 
 APPLY_FIX_SCHEMA = vol.Schema({
     vol.Required("fix_script"): vol.Any(str, list, dict),
     vol.Optional("issue_id"): cv.string,
-})
+}, extra=vol.ALLOW_EXTRA)
 
 ISSUE_ID_SCHEMA = vol.Schema({
     vol.Required("issue_id"): cv.string,
-})
+}, extra=vol.ALLOW_EXTRA)
 
 GENERATE_AUTOMATION_SCHEMA = vol.Schema({
     vol.Required("prompt"): cv.string,
-})
+}, extra=vol.ALLOW_EXTRA)
 
 ANALYZE_IMAGE_SCHEMA = vol.Schema({
     vol.Optional("camera_entity_id"): cv.string,
     vol.Optional("image_path"): cv.string,
     vol.Optional("prompt"): cv.string,
     vol.Optional("model"): cv.string,
-})
+}, extra=vol.ALLOW_EXTRA)
 
 DAILY_BRIEFING_SCHEMA = vol.Schema({
     vol.Optional("time_of_day", default="auto"): cv.string,
     vol.Optional("custom_instruction"): cv.string,
-})
+}, extra=vol.ALLOW_EXTRA)
 
 
 async def _persist_state(data: dict) -> None:
@@ -785,10 +787,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     # Services d'administration (exécution de correctifs et analyses)
     async_register_admin_service(hass, DOMAIN, "apply_fix", handle_apply_fix, schema=APPLY_FIX_SCHEMA)
-    async_register_admin_service(hass, DOMAIN, "apply_all_fixes", handle_apply_all_fixes)
+    async_register_admin_service(hass, DOMAIN, "apply_all_fixes", handle_apply_all_fixes, schema=SCHEMA_EMPTY)
 
     # Services de diagnostic et d'assistance IA (réservés aux administrateurs pour protéger le quota et les accès système)
-    async_register_admin_service(hass, DOMAIN, "analyze_now", handle_analyze_now)
+    async_register_admin_service(hass, DOMAIN, "analyze_now", handle_analyze_now, schema=SCHEMA_EMPTY)
     async_register_admin_service(hass, DOMAIN, "ignore_issue", handle_ignore_issue, schema=ISSUE_ID_SCHEMA)
     async_register_admin_service(hass, DOMAIN, "unignore_issue", handle_unignore_issue, schema=ISSUE_ID_SCHEMA)
     async_register_admin_service(
