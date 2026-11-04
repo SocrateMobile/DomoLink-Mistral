@@ -314,12 +314,29 @@ def setup_ha_mock():
 
     # homeassistant.config_entries
     ha_config_entries = types.ModuleType("homeassistant.config_entries")
+    class ConfigEntryState:
+        LOADED = "loaded"
+        NOT_LOADED = "not_loaded"
+        SETUP_ERROR = "setup_error"
+        SETUP_RETRY = "setup_retry"
+        MIGRATION_ERROR = "migration_error"
+        FAILED_UNLOAD = "failed_unload"
+
     class ConfigEntry:
-        def __init__(self, entry_id="test_entry", data=None, options=None):
+        def __init__(self, entry_id="test_entry", domain="test_domain", title="Test Title", data=None, options=None, state=ConfigEntryState.LOADED, source="user", disabled_by=None):
             self.entry_id = entry_id
+            self.domain = domain
+            self.title = title
             self.data = data or {}
             self.options = options or {}
+            self.state = state
+            self.source = source
+            self.disabled_by = disabled_by
+
+    ha_config_entries.ConfigEntryState = ConfigEntryState
     ha_config_entries.ConfigEntry = ConfigEntry
+    ha_config_entries.SOURCE_IGNORE = "ignore"
+    ha_config_entries.SOURCE_USER = "user"
     sys.modules["homeassistant.config_entries"] = ha_config_entries
 
     # homeassistant.components.recorder

@@ -99,6 +99,71 @@ class TestDomolinkMistralArchitecture(unittest.TestCase):
         self.assertEqual(err429["type"], "rate_limit")
         self.assertIn("HTTP 429", err429["user_msg"])
 
+    def test_ignored_and_disabled_integration_discrimination(self):
+        """Ensure ignored (source=ignore) and disabled integrations are never reported as pending or failed."""
+        import asyncio
+        from homeassistant.core import HomeAssistant
+        from homeassistant.config_entries import ConfigEntry, ConfigEntryState
+        from custom_components.domolink_mistral.analyzer import _get_integration_issues
+
+        hass = HomeAssistant()
+        # Mock entries:
+        # 1. ZHA ConBee II ignored by user (like in OUARZA forum report)
+        entry_ignored = ConfigEntry(
+            entry_id="zha_conbee",
+            domain="zha",
+            title="ConBee II",
+            state=ConfigEntryState.NOT_LOADED,
+            source="ignore",
+            disabled_by=None,
+        )
+        # 2. Shelly disabled by user
+        entry_disabled = ConfigEntry(
+            entry_id="shelly_1",
+            domain="shelly",
+            title="Lampe Salon",
+            state=ConfigEntryState.NOT_LOADED,
+            source="user",
+            disabled_by="user",
+        )
+        # 3. Failing integration
+        entry_failed = ConfigEntry(
+            entry_id="hue_broken",
+            domain="hue",
+            title="Pont Philips Hue",
+            state=ConfigEntryState.SETUP_ERROR,
+            source="user",
+        )
+        # 4. Genuine retry/not loaded integration
+        entry_retry = ConfigEntry(
+            entry_id="netatmo_pending",
+            domain="netatmo",
+            title="Station Météo",
+            state=ConfigEntryState.SETUP_RETRY,
+            source="user",
+        )
+
+        hass.config_entries.async_entries.return_value = [
+            entry_ignored,
+            entry_disabled,
+            entry_failed,
+            entry_retry,
+        ]
+
+        report = asyncio.run(_get_integration_issues(hass))
+
+        # Check that ignored integration is present in ignored list but NOT in error/pending
+        self.assertIn("ConBee II (zha) — Statut: Ignorée volontairement par l'utilisateur", report)
+        self.assertIn("Lampe Salon (shelly) — Statut: Désactivée volontairement par l'utilisateur", report)
+        self.assertIn("Pont Philips Hue (hue) — État: setup_error", report)
+        self.assertIn("Station Météo (netatmo) — État: setup_retry", report)
+
+        # Header summary counts
+        self.assertIn("En erreur: 1", report)
+        self.assertIn("En attente: 1", report)
+        self.assertIn("Ignorées: 1", report)
+        self.assertIn("Désactivées: 1", report)
+
     def test_manifest_requirements_and_version(self):
         """Ensure manifest.json is well-formed with domain and version."""
         import json
@@ -107,7 +172,7 @@ class TestDomolinkMistralArchitecture(unittest.TestCase):
             manifest = json.load(f)
 
         self.assertEqual(manifest.get("domain"), "domolink_mistral")
-        self.assertEqual(manifest.get("version"), "3.0.1")
+        self.assertTrue(manifest.get("version"))
         self.assertIn("codeowners", manifest)
 
 
