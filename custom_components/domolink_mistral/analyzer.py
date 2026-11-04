@@ -581,40 +581,76 @@ async def _get_unavailable_entities(hass: HomeAssistant) -> str:
 
 
 async def _get_integration_issues(hass: HomeAssistant) -> str:
-    """Vérifie l'état des intégrations configurées."""
+    """Vérifie l'état des intégrations configurées en discriminant les choix volontaires de l'utilisateur."""
     try:
+        from homeassistant import config_entries
         from homeassistant.config_entries import ConfigEntryState
         error_states = {ConfigEntryState.SETUP_ERROR, ConfigEntryState.MIGRATION_ERROR}
         retry_states = {ConfigEntryState.SETUP_RETRY, ConfigEntryState.NOT_LOADED}
+        source_ignore = getattr(config_entries, "SOURCE_IGNORE", "ignore")
     except Exception:
         error_states = set()
         retry_states = set()
+        source_ignore = "ignore"
 
     raw_entries = hass.config_entries.async_entries()
     # Tri stable par domaine et titre
     entries = sorted(raw_entries, key=lambda e: (getattr(e, "domain", ""), getattr(e, "title", "")))
     failed = []
     not_loaded = []
+    ignored = []
+    disabled = []
 
     for entry in entries:
-        if getattr(entry, "disabled_by", None):
-            continue  # Ne pas signaler les intégrations volontairement désactivées par l'utilisateur
+        title = getattr(entry, "title", "") or getattr(entry, "domain", "Inconnue")
+        domain = getattr(entry, "domain", "")
+        source = str(getattr(entry, "source", "") or "").lower()
+        disabled_by = getattr(entry, "disabled_by", None)
+
+        # 1. Intégrations ignorées par l'utilisateur dans Home Assistant (source: ignore / bouton 'Ne plus ignorer')
+        if source == "ignore" or source == str(source_ignore).lower():
+            ignored.append(f"  ⚪ {title} ({domain}) — Statut: Ignorée volontairement par l'utilisateur (source: ignore)")
+            continue
+
+        # 2. Intégrations volontairement désactivées par l'utilisateur
+        if disabled_by:
+            disabled.append(f"  ⚪ {title} ({domain}) — Statut: Désactivée volontairement par l'utilisateur ({disabled_by})")
+            continue
 
         state = getattr(entry, "state", None)
         state_str = str(state)
         state_lower = state_str.lower()
 
         if state in error_states or "error" in state_lower or "failed" in state_lower:
-            failed.append(f"  🔴 {entry.title} ({entry.domain}) — État: {state_str}")
+            failed.append(f"  🔴 {title} ({domain}) — État: {state_str}")
         elif state in retry_states or "not_loaded" in state_lower or "retry" in state_lower:
-            not_loaded.append(f"  🟡 {entry.title} ({entry.domain}) — État: {state_str}")
+            not_loaded.append(f"  🟡 {title} ({domain}) — État: {state_str}")
+
+    lines = [
+        f"Intégrations analysées: {len(entries)} (En erreur: {len(failed)}, En attente: {len(not_loaded)}, Ignorées: {len(ignored)}, Désactivées: {len(disabled)})"
+    ]
+
+    if failed:
+        lines.append("🔴 INTÉGRATIONS EN ERREUR / EN PANNE :")
+        lines.extend(failed)
+
+    if not_loaded:
+        lines.append("🟡 INTÉGRATIONS EN ATTENTE OU NON CHARGÉES :")
+        lines.extend(not_loaded)
+
+    if ignored:
+        lines.append("⚪ INTÉGRATIONS VOLONTAIREMENT IGNORÉES PAR L'UTILISATEUR (CHOIX VOLONTAIRE — NE PAS SIGNALER D'ANOMALIE) :")
+        lines.extend(ignored)
+
+    if disabled:
+        lines.append("⚪ INTÉGRATIONS VOLONTAIREMENT DÉSACTIVÉES PAR L'UTILISATEUR (CHOIX VOLONTAIRE — NE PAS SIGNALER D'ANOMALIE) :")
+        lines.extend(disabled)
 
     if not failed and not not_loaded:
-        return "Toutes les intégrations sont chargées correctement."
+        if not ignored and not disabled:
+            return "Toutes les intégrations sont chargées et opérationnelles."
+        return "\n".join(lines)
 
-    lines = [f"Intégrations en erreur: {len(failed)}, en attente: {len(not_loaded)}"]
-    lines.extend(failed)
-    lines.extend(not_loaded)
     return "\n".join(lines)
 
 
@@ -626,7 +662,11 @@ async def _get_system_info(hass: HomeAssistant) -> str:
         lines.append(f"Fuseau horaire: {hass.config.time_zone}")
         lines.append(f"Composants chargés: {len(hass.config.components)}")
         lines.append(f"Entités totales: {len(hass.states.async_all())}")
-        lines.append(f"Intégrations configurées: {len(hass.config_entries.async_entries())}")
+        raw_entries = hass.config_entries.async_entries()
+        ignored_count = sum(1 for e in raw_entries if str(getattr(e, "source", "") or "").lower() == "ignore")
+        disabled_count = sum(1 for e in raw_entries if getattr(e, "disabled_by", None))
+        active_count = len(raw_entries) - ignored_count - disabled_count
+        lines.append(f"Intégrations configurées: {len(raw_entries)} (actives: {active_count}, ignorées: {ignored_count}, désactivées: {disabled_count})")
     except Exception as e:
         _LOGGER.debug("DomoLink-Mistral: Erreur info système: %s", e)
     return "\n".join(lines)
