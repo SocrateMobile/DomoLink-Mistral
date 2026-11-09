@@ -1,5 +1,10 @@
 # 🧠 DomoLink-Mistral IA pour Home Assistant
 
+[![Documentation Officielle](https://img.shields.io/badge/Documentation-socratemobile.fr-06b6d4.svg?logo=googlechrome&logoColor=white)](https://socratemobile.fr/integration.html?id=domolink-mistral)
+
+> 🌐 **Site officiel & Documentation complète** : Retrouvez le guide d'installation pas à pas, les entités supportées et les exemples d'automatisations sur [socratemobile.fr](https://socratemobile.fr/integration.html?id=domolink-mistral).
+
+
 [![HACS](https://img.shields.io/badge/HACS-Default-blue.svg)](https://github.com/SocrateMobile/DomoLink-Mistral)
 [![Version](https://img.shields.io/badge/version-3.0.2-green.svg)](https://github.com/SocrateMobile/DomoLink-Mistral/releases)
 [![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-Socrate-FFDD00?logo=buy-me-a-coffee&logoColor=000000)](https://buymeacoffee.com/Socrate)
