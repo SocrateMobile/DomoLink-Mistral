@@ -1,7 +1,7 @@
 """Constantes pour l'intégration Domolink-Mistral."""
 
 DOMAIN = "domolink_mistral"
-VERSION = "3.0.2"
+VERSION = "3.0.3"
 
 CONF_API_KEY = "api_key"
 CONF_MODEL = "model"
