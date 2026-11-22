@@ -211,13 +211,12 @@ class DomolinkMistralOptionsFlowHandler(config_entries.OptionsFlow):
             current_model = DEFAULT_MODEL
         current_mode = current_options.get(CONF_SCAN_MODE, "live")
         current_freq = current_options.get(CONF_SCAN_FREQUENCY, 1)
-        current_api_key = self.config_entry.data.get(CONF_API_KEY, "")
 
         return self.async_show_form(
             step_id="init",
             data_schema=vol.Schema(
                 {
-                    vol.Optional(CONF_API_KEY, default=current_api_key): str,
+                    vol.Optional(CONF_API_KEY, default=""): str,
                     vol.Required(CONF_MODEL, default=current_model): vol.In(MODELS),
                     vol.Required(CONF_SCAN_MODE, default=current_mode): vol.In(
                         list(SCAN_MODES.keys())

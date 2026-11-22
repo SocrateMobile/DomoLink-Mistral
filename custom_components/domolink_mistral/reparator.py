@@ -36,7 +36,7 @@ async def trigger_backup(hass: HomeAssistant) -> bool:
                     "DomoLink-Mistral: Le service backup.create a échoué ou a dépassé le délai (%s).",
                     be,
                 )
-                return True
+                return False
 
         # Méthode via Hass.io / Supervisor
         if hass.services.has_service("hassio", "backup_full"):
@@ -53,17 +53,17 @@ async def trigger_backup(hass: HomeAssistant) -> bool:
                     "DomoLink-Mistral: Le service hassio.backup_full a échoué ou a dépassé le délai (%s).",
                     se,
                 )
-                return True
+                return False
 
-        _LOGGER.debug("DomoLink-Mistral: Aucun service de backup global actif.")
-        return True
+        _LOGGER.error("DomoLink-Mistral: Aucun service de sauvegarde système (backup.create / hassio.backup_full) disponible.")
+        return False
 
     except Exception as e:
-        _LOGGER.warning(
+        _LOGGER.error(
             "DomoLink-Mistral: Impossible d'exécuter la sauvegarde système globale: %s.",
             e,
         )
-        return True
+        return False
 
 
 def _is_service_allowed(domain: str, service: str) -> bool:
